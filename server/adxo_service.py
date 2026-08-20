@@ -15,17 +15,19 @@ that agreement (see DXMon's Joplin note, "ADXO Ingestion Service" section).
 """
 
 import hashlib
+import json
 import logging
 import os
 import re
 import threading
 import time
+import uuid
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import requests
 from bs4 import BeautifulSoup, NavigableString
-from flask import Flask, jsonify
+from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 # --------------------------------------------------------------------------------------
 # Config
@@ -48,6 +50,10 @@ MIN_REFRESH_INTERVAL_SECONDS = int(os.environ.get("MIN_REFRESH_INTERVAL_SECONDS"
 
 REQUEST_TIMEOUT_SECONDS = 20
 USER_AGENT = "N4MI-DXMon/1.0 (+https://github.com/N4MI73/n4mi-dx-monitor; contact via n4mi73@gmail.com)"
+
+# Watched-list persistence. Must live under a Docker volume (see docker-compose.yml) --
+# otherwise every container rebuild silently wipes the watchlist.
+WATCHED_FILE = os.environ.get("WATCHED_FILE", "/app/data/watched.json")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -348,10 +354,93 @@ def _scheduler_loop():
 
 
 # --------------------------------------------------------------------------------------
+# Watched list -- curation UI's core write path
+# --------------------------------------------------------------------------------------
+
+_watched_lock = threading.Lock()
+_watched = []  # list of dicts, loaded from WATCHED_FILE at startup
+
+
+def _load_watched():
+    global _watched
+    try:
+        with open(WATCHED_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            _watched = data
+            log.info("Loaded %d watched entries from %s", len(_watched), WATCHED_FILE)
+        else:
+            log.error("Watched file did not contain a list -- starting empty, not overwriting")
+    except FileNotFoundError:
+        log.info("No existing watched file at %s -- starting empty", WATCHED_FILE)
+    except (json.JSONDecodeError, OSError) as exc:
+        # Never let a corrupt/unreadable file silently wipe what might still be good data
+        # on disk. Start the in-memory list empty for this run, but do NOT save over the
+        # file until a real add/remove happens -- gives Dan a chance to notice and recover
+        # the file manually if this ever fires unexpectedly.
+        log.error("Failed to load watched file (%s) -- starting empty in memory, "
+                   "NOT overwriting the file on disk: %s", WATCHED_FILE, exc)
+        _watched = []
+
+
+def _save_watched():
+    """Atomic write -- write to a temp file, then replace, so a crash mid-write can't
+    corrupt the real file."""
+    os.makedirs(os.path.dirname(WATCHED_FILE), exist_ok=True)
+    tmp_path = WATCHED_FILE + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(_watched, f, indent=2)
+    os.replace(tmp_path, WATCHED_FILE)
+
+
+def _watched_by_adxo_id():
+    """dict of source_adxo_id -> list of watched entries, for the browse page to show
+    'already watching X from this entry' inline."""
+    result = {}
+    with _watched_lock:
+        for w in _watched:
+            sid = w.get("source_adxo_id")
+            if sid:
+                result.setdefault(sid, []).append(w)
+    return result
+
+
+def _add_watched(callsign, dxcc, source_adxo_id=None, note=""):
+    callsign = (callsign or "").strip()
+    dxcc = (dxcc or "").strip()
+    if not callsign or not dxcc:
+        return None, "Callsign and DXCC entity are both required."
+
+    entry = {
+        "id": uuid.uuid4().hex[:12],
+        "callsign": callsign,
+        "dxcc": dxcc,
+        "source_adxo_id": (source_adxo_id or "").strip() or None,
+        "note": (note or "").strip(),
+        "added": datetime.now(EASTERN).isoformat(),
+    }
+    with _watched_lock:
+        _watched.append(entry)
+        _save_watched()
+    return entry, None
+
+
+def _remove_watched(watched_id):
+    with _watched_lock:
+        before = len(_watched)
+        _watched[:] = [w for w in _watched if w["id"] != watched_id]
+        removed = len(_watched) != before
+        if removed:
+            _save_watched()
+    return removed
+
+
+# --------------------------------------------------------------------------------------
 # Flask app
 # --------------------------------------------------------------------------------------
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dxmon-dev-secret")
 
 
 @app.route("/healthz")
@@ -402,7 +491,78 @@ def debug():
         })
 
 
+@app.route("/api/watched", methods=["GET"])
+def api_watched_list():
+    with _watched_lock:
+        return jsonify({"entries": list(_watched), "count": len(_watched)})
+
+
+@app.route("/api/watched", methods=["POST"])
+def api_watched_add():
+    payload = request.get_json(silent=True) or {}
+    entry, error = _add_watched(
+        callsign=payload.get("callsign"),
+        dxcc=payload.get("dxcc"),
+        source_adxo_id=payload.get("source_adxo_id"),
+        note=payload.get("note"),
+    )
+    if error:
+        return jsonify({"error": error}), 400
+    return jsonify(entry), 201
+
+
+@app.route("/api/watched/<watched_id>", methods=["DELETE"])
+def api_watched_remove(watched_id):
+    removed = _remove_watched(watched_id)
+    if not removed:
+        return jsonify({"error": "not found"}), 404
+    return jsonify({"removed": watched_id})
+
+
+# --------------------------------------------------------------------------------------
+# Curation UI pages (server-rendered, plain HTML forms -- no JS needed for this pass)
+# --------------------------------------------------------------------------------------
+
+@app.route("/")
+def page_index():
+    with _lock:
+        entries = list(_state["entries"])
+    # Active first, then soonest-upcoming -- matches the Watched screen's own sort rule
+    # already decided for firmware, applied here too for consistency.
+    entries.sort(key=lambda e: (not e["active"], e["begin"]))
+    watched_map = _watched_by_adxo_id()
+    return render_template("index.html", entries=entries, watched_map=watched_map)
+
+
+@app.route("/watched")
+def page_watched():
+    with _watched_lock:
+        entries = sorted(_watched, key=lambda w: w["added"], reverse=True)
+    return render_template("watched.html", entries=entries)
+
+
+@app.route("/watch", methods=["POST"])
+def page_watch_add():
+    _add_watched(
+        callsign=request.form.get("callsign"),
+        dxcc=request.form.get("dxcc"),
+        source_adxo_id=request.form.get("source_adxo_id"),
+        note=request.form.get("note"),
+    )
+    # Errors are simply ignored here (silently no-op if callsign/dxcc empty) --
+    # the form itself makes both fields required client-side; this endpoint stays
+    # forgiving rather than surfacing a raw 400 in the browser for v1.
+    return redirect(url_for("page_index"))
+
+
+@app.route("/watch/remove/<watched_id>", methods=["POST"])
+def page_watch_remove(watched_id):
+    _remove_watched(watched_id)
+    return redirect(url_for("page_watched"))
+
+
 if __name__ == "__main__":
+    _load_watched()
     t = threading.Thread(target=_scheduler_loop, daemon=True)
     t.start()
     app.run(host="0.0.0.0", port=LISTEN_PORT, threaded=True)

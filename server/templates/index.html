@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Browse{% endblock %}
+{% block content %}
+  <p class="meta">{{ entries|length }} current/upcoming ADXO entries.</p>
+
+  {% if not entries %}
+    <div class="empty">No ADXO entries loaded yet -- check /debug on the ADXO service.</div>
+  {% endif %}
+
+  {% for e in entries %}
+    <div class="card {{ 'active-now' if e.active else '' }}">
+      <div class="card-top">
+        <div>
+          <span class="dxcc">{{ e.dxcc }}</span>
+          &mdash; <span class="callsign">{{ e.callsign }}</span>
+        </div>
+        <span class="badge {{ '' if e.active else 'upcoming' }}">
+          {{ 'Active now' if e.active else 'Upcoming' }}
+        </span>
+      </div>
+      <div class="dates">{{ e.begin }} &ndash; {{ e.end }} &middot; QSL: {{ e.qsl }} &middot; {{ e.source }}</div>
+      <div class="info">{{ e.info }}</div>
+
+      {% if watched_map.get(e.id) %}
+        <div class="watched-tags">
+          {% for w in watched_map[e.id] %}
+            <span class="watched-tag">Watching: {{ w.callsign }}</span>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      <form class="watch-form" method="post" action="{{ url_for('page_watch_add') }}">
+        <input type="hidden" name="source_adxo_id" value="{{ e.id }}">
+        <input type="hidden" name="dxcc" value="{{ e.dxcc }}">
+        <input type="text" name="callsign" value="{{ e.callsign }}" required
+               title="Confirm/edit the exact on-air callsign before watching">
+        <input type="text" name="note" placeholder="note (optional)">
+        <button type="submit">+ Watch</button>
+      </form>
+    </div>
+  {% endfor %}
+{% endblock %}

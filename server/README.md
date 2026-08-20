@@ -41,6 +41,19 @@ python adxo_service.py
 
 Listens on port 8083 (override with the `PORT` env var).
 
+## Web curation UI
+
+Server-rendered pages (plain HTML forms, no JS required) at the container's root:
+
+| Page | Purpose |
+|---|---|
+| `/` | Browse current/upcoming ADXO entries. Active-now entries sort first. Each entry has an inline "Watch" form pre-filled with ADXO's listed callsign -- edit it before submitting if the actual on-air callsign differs (e.g. "3B9" listed, operating "as 3B9/SQ9UM"). Already-watched callsigns tied to an entry show as tags so you don't accidentally double-watch. |
+| `/watched` | Current watchlist, with a Remove action per entry. |
+
+Watched entries persist to `WATCHED_FILE` (default `/app/data/watched.json`), which **must**
+be on a Docker volume (see `docker-compose.yml`) -- otherwise a container rebuild wipes the
+watchlist.
+
 ## Endpoints
 
 | Endpoint | Method | Purpose |
@@ -48,6 +61,9 @@ Listens on port 8083 (override with the `PORT` env var).
 | `/healthz` | GET | Liveness check, always returns `{"status": "ok"}` |
 | `/api/adxo` | GET | Current parsed entries (expired entries already filtered out) |
 | `/api/adxo/refresh` | POST | Manual refresh trigger, rate-limited by `MIN_REFRESH_INTERVAL_SECONDS` |
+| `/api/watched` | GET | Current watchlist as JSON |
+| `/api/watched` | POST | Add a watched entry -- JSON body `{"callsign", "dxcc", "source_adxo_id"?, "note"?}` |
+| `/api/watched/<id>` | DELETE | Remove a watched entry |
 | `/debug` | GET | Internal state for self-diagnosis (last fetch time/status, poll schedule, etc.) |
 
 ## JSON shape

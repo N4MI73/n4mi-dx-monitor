@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Watched{% endblock %}
+{% block content %}
+  <p class="meta">{{ entries|length }} watched callsign(s).</p>
+
+  {% if not entries %}
+    <div class="empty">Nothing watched yet -- add some from the Browse ADXO page.</div>
+  {% endif %}
+
+  {% for w in entries %}
+    <div class="card">
+      <div class="card-top">
+        <div>
+          <span class="callsign">{{ w.callsign }}</span>
+          &mdash; <span class="dxcc">{{ w.dxcc }}</span>
+        </div>
+        <form method="post" action="{{ url_for('page_watch_remove', watched_id=w.id) }}"
+              onsubmit="return confirm('Remove {{ w.callsign }} from watched?');">
+          <button type="submit" class="remove">Remove</button>
+        </form>
+      </div>
+      {% if w.note %}<div class="info">{{ w.note }}</div>{% endif %}
+      <div class="meta">
+        Added {{ w.added }}
+        {% if w.source_adxo_id %} &middot; linked to ADXO entry {{ w.source_adxo_id }}{% endif %}
+      </div>
+    </div>
+  {% endfor %}
+{% endblock %}

@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}DXMon{% endblock %} -- DXMon Curation</title>
+  <style>
+    :root {
+      --bg: #14161a;
+      --panel: #1d2025;
+      --panel-alt: #24282e;
+      --border: #33383f;
+      --text: #e6e8eb;
+      --muted: #8a919c;
+      --accent-active: #4a9eff;
+      --accent-watched: #4ade80;
+      --accent-upcoming: #f2b544;
+      --danger: #f26b6b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 0 0 3rem;
+    }
+    header {
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 1.5rem;
+      display: flex;
+      align-items: baseline;
+      gap: 1.5rem;
+    }
+    header h1 {
+      font-size: 1.1rem;
+      margin: 0;
+      letter-spacing: 0.03em;
+      color: var(--text);
+    }
+    header nav a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      margin-right: 1rem;
+    }
+    header nav a:hover, header nav a.active {
+      color: var(--text);
+    }
+    main {
+      max-width: 900px;
+      margin: 1.5rem auto;
+      padding: 0 1.5rem;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 0.9rem;
+    }
+    .card.active-now {
+      border-left: 3px solid var(--accent-active);
+    }
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .dxcc {
+      font-weight: 600;
+      font-size: 1.05rem;
+    }
+    .callsign {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      color: var(--accent-active);
+      font-size: 1rem;
+    }
+    .badge {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      background: var(--accent-active);
+      color: #05121f;
+      font-weight: 600;
+    }
+    .badge.upcoming {
+      background: var(--accent-upcoming);
+      color: #241a00;
+    }
+    .dates {
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .info {
+      color: var(--text);
+      font-size: 0.88rem;
+      margin-top: 0.4rem;
+      line-height: 1.4;
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 0.8rem;
+      margin-top: 0.3rem;
+    }
+    .watched-tags {
+      margin-top: 0.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+    .watched-tag {
+      background: var(--panel-alt);
+      border: 1px solid var(--accent-watched);
+      color: var(--accent-watched);
+      font-size: 0.78rem;
+      padding: 0.15rem 0.55rem;
+      border-radius: 999px;
+    }
+    form.watch-form {
+      margin-top: 0.7rem;
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    input[type=text] {
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.35rem 0.6rem;
+      border-radius: 5px;
+      font-size: 0.85rem;
+    }
+    input[name=callsign] { width: 10rem; font-family: monospace; }
+    input[name=note] { width: 14rem; }
+    button {
+      background: var(--accent-active);
+      color: #05121f;
+      border: none;
+      padding: 0.4rem 0.9rem;
+      border-radius: 5px;
+      font-weight: 600;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    button:hover { opacity: 0.9; }
+    button.remove {
+      background: var(--danger);
+      color: #240404;
+    }
+    .empty {
+      color: var(--muted);
+      padding: 2rem 0;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>DXMon Curation</h1>
+    <nav>
+      <a href="{{ url_for('page_index') }}" class="{{ 'active' if request.path == '/' else '' }}">Browse ADXO</a>
+      <a href="{{ url_for('page_watched') }}" class="{{ 'active' if request.path == '/watched' else '' }}">Watched</a>
+    </nav>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
