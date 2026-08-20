@@ -1,0 +1,10 @@
+services:
+  dxmon-adxo:
+    build: .
+    container_name: dxmon-adxo
+    ports:
+      - "8083:8083"
+    restart: unless-stopped
+    environment:
+      - PORT=8083
+      # - MIN_REFRESH_INTERVAL_SECONDS=3600   # override if needed

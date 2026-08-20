@@ -1,0 +1,40 @@
+# --- Python (server/) ---
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+venv/
+.venv/
+env/
+
+# Local environment / secrets -- never commit real credentials
+.env
+*.env.local
+
+# --- PlatformIO / ESP32 firmware (firmware/, once it exists) ---
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Series convention: Wi-Fi credentials are never committed. The placeholder
+# wifi_credentials.h.example stays tracked; only the real file is ignored.
+wifi_credentials.h
+
+# --- VS Code ---
+# extensions.json is intentionally tracked (series convention, recommends the
+# PlatformIO extension to anyone cloning the repo) -- only ignore user-specific
+# workspace state, not the whole .vscode/ folder.
+.vscode/*
+!.vscode/extensions.json
+
+# --- OS noise ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Editor backups ---
+*~
+*.swp
