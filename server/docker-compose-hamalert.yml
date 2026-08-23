@@ -1,0 +1,15 @@
+services:
+  dxmon-hamalert:
+    build:
+      context: .
+      dockerfile: Dockerfile.hamalert
+    container_name: dxmon-hamalert
+    ports:
+      - "8084:8084"
+    restart: unless-stopped
+    environment:
+      - PORT=8084
+      - HAMALERT_USER=${HAMALERT_USER}
+      - HAMALERT_PASS=${HAMALERT_PASS}
+      # - HEARTBEAT_INTERVAL_SECONDS=60
+      # - HEARTBEAT_TIMEOUT_SECONDS=30
