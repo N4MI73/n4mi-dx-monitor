@@ -108,3 +108,49 @@ Standard series pattern -- Stacks -> Repository build method, compose path
 `firmware/` (APRSMon's pattern). Set `MIN_REFRESH_INTERVAL_SECONDS` as an env var
 override only if you have a real reason to change the testing floor -- do not use it
 to increase real-world polling frequency past once/day.
+
+## HamAlert listener (separate service)
+
+Real-time spot matching runs as its own service, `hamalert_listener.py`, deployed as
+a **separate Portainer stack** (compose path `server/docker-compose-hamalert.yml`,
+its own container `dxmon-hamalert`, port 8084) -- not part of this Flask process.
+Unlike the ADXO service, this is a persistent Telnet connection with a genuinely
+different failure mode (matches the reasoning behind APRSMon's own Weather/Mobile
+split), so it's kept separate rather than folded in.
+
+**Protocol** (confirmed live 2026-08-22/23, since HamAlert's Telnet interface has no
+formal published spec -- only two documented commands, `sh/dx N` and `set/json`):
+connect to `hamalert.org:7300` -> login prompt -> username -> password prompt ->
+password -> `set/json` to enable JSON spot output. An undocumented `echo <token>`
+command (confirmed by the HamAlert developer on their support forum) is used as a
+keepalive, since no other heartbeat mechanism exists.
+
+**Credentials** (`HAMALERT_USER`, `HAMALERT_PASS`) are Portainer stack environment
+variables, entered directly in Portainer's UI -- never committed. The compose file
+uses bare-name pass-through syntax (`- HAMALERT_USER` with no `=value`) rather than
+`${VAR}` interpolation, because Portainer's Repository build method requires
+interpolated values to come from an actual `stack.env` file in the repo, which would
+mean committing credentials -- not acceptable. Bare-name pass-through sidesteps that
+requirement entirely.
+
+**Enable/disable:** the listener can be toggled via `POST /api/hamalert/enable` and
+`POST /api/hamalert/disable` (or the toggle button on the curation UI's HamAlert
+page, `/hamalert`). The enabled/disabled state persists to a Docker volume
+(`dxmon_hamalert_data`) and survives a container restart -- so disabling before an
+extended absence from the shack stays disabled even through a NAS reboot, rather
+than silently re-enabling.
+
+**Endpoints:**
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/healthz` | GET | Liveness check |
+| `/api/hamalert/recent` | GET | Last 100 matched spots received |
+| `/api/hamalert/status` | GET | `{enabled, connected, logged_in}` |
+| `/api/hamalert/enable` | POST | Enable the listener |
+| `/api/hamalert/disable` | POST | Disable the listener (closes the connection if active) |
+| `/debug` | GET | Full internal state -- connection status, last spot/heartbeat times, reconnect count, last error |
+
+No matching/filtering happens in this service -- HamAlert's own trigger(s), configured
+directly on hamalert.org (no API exists for managing them from here), decide what
+gets sent. This service just receives, stores, and exposes whatever arrives.

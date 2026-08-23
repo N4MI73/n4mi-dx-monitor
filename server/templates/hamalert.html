@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}HamAlert{% endblock %}
+{% block content %}
+  {% if status_err %}
+    <div class="card" style="border-left: 3px solid var(--danger);">
+      <div class="dxcc">HamAlert listener unreachable</div>
+      <div class="info">Couldn't reach {{ status_err }}. Is the dxmon-hamalert stack running?</div>
+    </div>
+  {% else %}
+    <div class="card {{ 'active-now' if status.connected else '' }}">
+      <div class="card-top">
+        <div class="dxcc">HamAlert Listener</div>
+        <span class="badge {{ '' if status.enabled else 'upcoming' }}">
+          {{ 'Enabled' if status.enabled else 'Disabled' }}
+        </span>
+      </div>
+      <div class="dates">
+        Connected: {{ 'yes' if status.connected else 'no' }}
+        &middot; Logged in: {{ 'yes' if status.logged_in else 'no' }}
+        &middot; JSON mode: {{ 'yes' if status.json_mode else 'no' }}
+      </div>
+      <div class="meta">
+        Last connected: {{ status.last_connected_at or 'never' }}<br>
+        Last spot received: {{ status.last_spot_at or 'none yet' }}<br>
+        Last heartbeat reply: {{ status.last_heartbeat_at or 'none yet' }}<br>
+        Reconnects so far: {{ status.reconnect_count }}
+        {% if status.last_error %}<br><span style="color: var(--danger);">Last error: {{ status.last_error }}</span>{% endif %}
+      </div>
+
+      <form class="watch-form" method="post"
+            action="{{ url_for('page_hamalert_disable') if status.enabled else url_for('page_hamalert_enable') }}"
+            {% if status.enabled %}onsubmit="return confirm('Disable the HamAlert listener? No spots will be received until re-enabled.');"{% endif %}>
+        {% if status.enabled %}
+          <button type="submit" class="remove">Disable</button>
+        {% else %}
+          <button type="submit">Enable</button>
+        {% endif %}
+      </form>
+    </div>
+  {% endif %}
+
+  <p class="meta" style="margin-top: 1.5rem;">Recent matched spots (from HamAlert's own trigger(s) -- this page shows what it already decided to send, no filtering happens here).</p>
+
+  {% if recent_err %}
+    <div class="empty">Can't load recent spots -- listener unreachable.</div>
+  {% elif not recent %}
+    <div class="empty">No spots received yet.</div>
+  {% endif %}
+
+  {% for entry in recent %}
+    <div class="card">
+      <div class="card-top">
+        <span class="callsign">{{ entry.spot.callsign or entry.spot.dx or '(unknown)' }}</span>
+        <span class="dates">{{ entry.received_at }}</span>
+      </div>
+      <div class="dates">
+        {% if entry.spot.band %}{{ entry.spot.band }}{% endif %}
+        {% if entry.spot.mode %} &middot; {{ entry.spot.mode }}{% endif %}
+        {% if entry.spot.dxcc %} &middot; {{ entry.spot.dxcc }}{% endif %}
+      </div>
+    </div>
+  {% endfor %}
+{% endblock %}

@@ -34,6 +34,13 @@ from flask import Flask, jsonify, redirect, render_template, request, url_for
 # --------------------------------------------------------------------------------------
 
 ADXO_URL = os.environ.get("ADXO_URL", "https://www.ng3k.com/Misc/adxoplain.html")
+
+# The HamAlert listener is a separate service/container (see docker-compose-hamalert.yml)
+# -- reached over the LAN like a browser would, not via a shared Docker network, since
+# it's deployed as its own Portainer stack. Configurable rather than hardcoded, per the
+# project's own "keep server addresses configurable" convention.
+HAMALERT_LISTENER_URL = os.environ.get("HAMALERT_LISTENER_URL", "http://192.168.6.29:8084")
+HAMALERT_REQUEST_TIMEOUT_SECONDS = 5
 LISTEN_PORT = int(os.environ.get("PORT", 8083))
 
 # Daily poll target time (America/New_York), scheduled after NG3K's own confirmed
@@ -436,6 +443,31 @@ def _remove_watched(watched_id):
 
 
 # --------------------------------------------------------------------------------------
+# HamAlert listener status/control -- calls the separate dxmon-hamalert service
+# --------------------------------------------------------------------------------------
+
+def _hamalert_get(path):
+    """GET a path on the HamAlert listener. Returns (json_or_None, error_str_or_None) --
+    never raises, so a down/unreachable listener degrades to a clear message on the page
+    rather than crashing the curation UI."""
+    try:
+        r = requests.get(f"{HAMALERT_LISTENER_URL}{path}", timeout=HAMALERT_REQUEST_TIMEOUT_SECONDS)
+        r.raise_for_status()
+        return r.json(), None
+    except requests.RequestException as exc:
+        return None, str(exc)
+
+
+def _hamalert_post(path):
+    try:
+        r = requests.post(f"{HAMALERT_LISTENER_URL}{path}", timeout=HAMALERT_REQUEST_TIMEOUT_SECONDS)
+        r.raise_for_status()
+        return r.json(), None
+    except requests.RequestException as exc:
+        return None, str(exc)
+
+
+# --------------------------------------------------------------------------------------
 # Flask app
 # --------------------------------------------------------------------------------------
 
@@ -559,6 +591,31 @@ def page_watch_add():
 def page_watch_remove(watched_id):
     _remove_watched(watched_id)
     return redirect(url_for("page_watched"))
+
+
+@app.route("/hamalert")
+def page_hamalert():
+    status, status_err = _hamalert_get("/debug")
+    recent, recent_err = _hamalert_get("/api/hamalert/recent")
+    return render_template(
+        "hamalert.html",
+        status=status,
+        status_err=status_err,
+        recent=(recent.get("spots", []) if recent else []),
+        recent_err=recent_err,
+    )
+
+
+@app.route("/hamalert/enable", methods=["POST"])
+def page_hamalert_enable():
+    _hamalert_post("/api/hamalert/enable")
+    return redirect(url_for("page_hamalert"))
+
+
+@app.route("/hamalert/disable", methods=["POST"])
+def page_hamalert_disable():
+    _hamalert_post("/api/hamalert/disable")
+    return redirect(url_for("page_hamalert"))
 
 
 if __name__ == "__main__":

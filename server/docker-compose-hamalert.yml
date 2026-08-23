@@ -11,5 +11,11 @@ services:
       - PORT=8084
       - HAMALERT_USER
       - HAMALERT_PASS
+      - HAMALERT_STATE_FILE=/app/data/state.json
       # - HEARTBEAT_INTERVAL_SECONDS=60
       # - HEARTBEAT_TIMEOUT_SECONDS=30
+    volumes:
+      - dxmon_hamalert_data:/app/data
+
+volumes:
+  dxmon_hamalert_data:
