@@ -9,7 +9,7 @@ services:
     restart: unless-stopped
     environment:
       - PORT=8084
-      - HAMALERT_USER=${HAMALERT_USER}
-      - HAMALERT_PASS=${HAMALERT_PASS}
+      - HAMALERT_USER
+      - HAMALERT_PASS
       # - HEARTBEAT_INTERVAL_SECONDS=60
       # - HEARTBEAT_TIMEOUT_SECONDS=30
