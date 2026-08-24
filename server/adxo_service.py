@@ -552,6 +552,115 @@ def api_watched_remove(watched_id):
 
 
 # --------------------------------------------------------------------------------------
+# DXMon-wide display schema -- the merged, device-facing view over watched.json,
+# the ADXO cache, and the HamAlert listener's recent spots. This is intentionally a
+# DIFFERENT endpoint from /api/watched: that one is the raw CRUD data model the
+# curation UI itself edits, this one is a display-ready join built for firmware/the
+# future virtual preview to consume directly, with no client-side merging needed.
+# --------------------------------------------------------------------------------------
+
+def _find_last_spot_for_callsign(callsign, recent_spots):
+    """Return a trimmed, display-ready spot dict for the most recent HamAlert spot
+    matching `callsign`, or None if there's no match. Matching is exact (case-
+    insensitive) against either the spot's `callsign` or `fullCallsign` field --
+    known limitation: doesn't attempt to reconcile portable-prefix variants (e.g.
+    a watched entry of "3B9/SQ9UM" won't match a bare "3B9" spot). Flagged as an
+    open item rather than solved here, since it needs real-world examples to get
+    right rather than guessing at every possible callsign format.
+    `recent_spots` is expected newest-first (matches the listener's own ordering).
+
+    `comment` (e.g. "up \"big pile\"", "FT8 F/H") is only present on real
+    `source: "cluster"` spots -- a human typed it. Automated sources (`"rbn"`,
+    `"pskreporter"`) never have it. Confirmed live 2026-08-24 -- HamAlert already
+    extracts this as its own field, no free-text parsing of `rawText` needed."""
+    target = (callsign or "").strip().upper()
+    if not target:
+        return None
+    for entry in recent_spots:
+        spot = entry.get("spot", {})
+        spot_callsign = (spot.get("callsign") or "").upper()
+        spot_full = (spot.get("fullCallsign") or "").upper()
+        if target in (spot_callsign, spot_full):
+            return {
+                "band": spot.get("band"),
+                "mode": spot.get("mode"),
+                "frequency": spot.get("frequency"),
+                "received_at": entry.get("received_at"),
+                "source": spot.get("source"),
+                "comment": spot.get("comment"),
+                "raw_text": spot.get("rawText"),
+                "spotter": spot.get("spotter"),
+                "spotter_continent": spot.get("spotterContinent"),
+                "spotter_entity": spot.get("spotterEntity"),
+            }
+    return None
+
+
+def _sort_key_group(item):
+    """0 = ADXO-active, 1 = ADXO-upcoming, 2 = spotted-only (no ADXO link), 3 = neither."""
+    if item["adxo"] and item["adxo"]["active"]:
+        return 0
+    if item["adxo"]:
+        return 1
+    if item["last_spot"]:
+        return 2
+    return 3
+
+
+def _build_dxmon_watched():
+    with _watched_lock:
+        watched_list = list(_watched)
+    with _lock:
+        adxo_by_id = {e["id"]: e for e in _state["entries"]}
+
+    recent, _recent_err = _hamalert_get("/api/hamalert/recent")
+    recent_spots = recent.get("spots", []) if recent else []
+
+    result = []
+    for w in watched_list:
+        adxo_obj = None
+        sid = w.get("source_adxo_id")
+        if sid and sid in adxo_by_id:
+            e = adxo_by_id[sid]
+            adxo_obj = {
+                "active": e["active"],
+                "begin": e["begin"],
+                "end": e["end"],
+                "info": e["info"],
+            }
+        result.append({
+            "callsign": w["callsign"],
+            "dxcc": w["dxcc"],
+            "note": w.get("note", ""),
+            "adxo": adxo_obj,
+            "last_spot": _find_last_spot_for_callsign(w["callsign"], recent_spots),
+        })
+
+    # Layered stable sort, least-significant key first -- see _sort_key_group's
+    # docstring for the four-group priority. Each pass only reorders items that are
+    # tied on every more-significant key applied afterward, since Python's sort is
+    # stable; this avoids needing one comparator that mixes ascending and descending
+    # directions across different fields.
+    result.sort(key=lambda item: item["callsign"])
+    result.sort(
+        key=lambda item: item["last_spot"]["received_at"] if item["last_spot"] else "",
+        reverse=True,
+    )
+    result.sort(key=lambda item: item["adxo"]["begin"] if item["adxo"] else "9999-99-99")
+    result.sort(key=_sort_key_group)
+
+    return result
+
+
+@app.route("/api/dxmon/watched")
+def api_dxmon_watched():
+    return jsonify({
+        "updated": datetime.now(EASTERN).isoformat(),
+        "watched": _build_dxmon_watched(),
+    })
+
+
+# --------------------------------------------------------------------------------------
 # Curation UI pages (server-rendered, plain HTML forms -- no JS needed for this pass)
 # --------------------------------------------------------------------------------------
 
