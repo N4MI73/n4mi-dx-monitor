@@ -14,6 +14,7 @@ Do not change the polling interval or remove the conditional-GET logic without r
 that agreement (see DXMon's Joplin note, "ADXO Ingestion Service" section).
 """
 
+import csv
 import hashlib
 import json
 import logging
@@ -61,6 +62,18 @@ USER_AGENT = "N4MI-DXMon/1.0 (+https://github.com/N4MI73/n4mi-dx-monitor; contac
 # Watched-list persistence. Must live under a Docker volume (see docker-compose.yml) --
 # otherwise every container rebuild silently wipes the watchlist.
 WATCHED_FILE = os.environ.get("WATCHED_FILE", "/app/data/watched.json")
+
+# Trigger Builder -- never-confirmed entity seed list. A static file Dan replaces
+# manually whenever he re-exports from his LoTW DXCC Credit Analyzer (no live sync --
+# matches the already-decided "Dan's own export is the source of truth" design).
+NO_CONFIRMS_FILE = os.environ.get("NO_CONFIRMS_FILE", "no_confirms.csv")
+
+# Above this many selected entities, a single trigger risks HamAlert's 10,000-
+# spots/day auto-disable ceiling (confirmed real, 2026-08-18 -- a 61-entity trigger
+# hit it). Below the threshold, one combined recipe is fine. Callsign-based triggers
+# never split -- Dan's own stated usage (2-3 watched callsigns, rarely more) plus the
+# inherently low volume of exact-callsign matching means splitting isn't needed there.
+ENTITY_SPLIT_THRESHOLD = 5
 
 logging.basicConfig(
     level=logging.INFO,
@@ -443,6 +456,104 @@ def _remove_watched(watched_id):
 
 
 # --------------------------------------------------------------------------------------
+# Trigger Builder -- generates ready-to-paste HamAlert trigger recipes
+# --------------------------------------------------------------------------------------
+
+_no_confirms_entities = []  # list of {"entity": str, "prefix": str}, loaded at startup
+
+
+def _load_no_confirms():
+    """Load the never-confirmed-entity seed list from NO_CONFIRMS_FILE. Missing or
+    unreadable file degrades to an empty list (the picker just shows no entities,
+    ad-hoc entity/callsign entry still works) rather than crashing the service."""
+    global _no_confirms_entities
+    try:
+        with open(NO_CONFIRMS_FILE, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            _no_confirms_entities = [
+                {"entity": row["Entity"].strip(), "prefix": row.get("Prefix", "").strip()}
+                for row in reader
+                if row.get("Entity", "").strip()
+            ]
+        log.info("Loaded %d never-confirmed entities from %s", len(_no_confirms_entities), NO_CONFIRMS_FILE)
+    except FileNotFoundError:
+        log.warning("No no_confirms file at %s -- entity picker will be empty until one is added", NO_CONFIRMS_FILE)
+        _no_confirms_entities = []
+    except (csv.Error, OSError, KeyError) as exc:
+        log.error("Failed to load %s -- entity picker will be empty: %s", NO_CONFIRMS_FILE, exc)
+        _no_confirms_entities = []
+
+
+DIGITAL_MODES = "FT8, FT4"
+VOICE_CW_MODES = "CW, SSB, RTTY"
+
+
+def _build_trigger_recipes(callsigns, entities):
+    """Pure function: given raw callsign/entity target lists, return a list of
+    ready-to-paste recipe dicts. No HamAlert API exists for automation (confirmed),
+    so this only ever produces text for Dan to manually enter on hamalert.org --
+    never claims to create anything automatically.
+
+    Callsign targets always produce exactly one recipe, unsplit -- see
+    ENTITY_SPLIT_THRESHOLD's comment for why. Entity targets split into a
+    Digital / Voice+CW pair once the list exceeds ENTITY_SPLIT_THRESHOLD, the same
+    lever design already established for the (still separately-designed) bulk
+    Needed-entity case."""
+    recipes = []
+
+    clean_callsigns = sorted({c.strip().upper() for c in callsigns if c.strip()})
+    clean_entities = sorted({e.strip() for e in entities if e.strip()})
+
+    if clean_callsigns:
+        recipes.append({
+            "title": "Watched Callsigns",
+            "condition_label": "Callsign is",
+            "condition_value": ", ".join(clean_callsigns),
+            "mode_filter": None,
+            "note": "Exact-callsign match, naturally low volume -- no splitting needed.",
+        })
+
+    if clean_entities:
+        if len(clean_entities) <= ENTITY_SPLIT_THRESHOLD:
+            recipes.append({
+                "title": "Needed Entities",
+                "condition_label": "DXCC is",
+                "condition_value": ", ".join(clean_entities),
+                "mode_filter": None,
+                "note": (
+                    "Select each entity BY NAME in HamAlert's own DXCC picker, not by "
+                    "prefix -- some prefixes are shared across entities (e.g. 3Y covers "
+                    "both Bouvet Island and Peter I Island)."
+                ),
+            })
+        else:
+            shared_note = (
+                "Select each entity BY NAME in HamAlert's own DXCC picker, not by "
+                "prefix -- some prefixes are shared across entities. Split into two "
+                "triggers because more than %d entities risks HamAlert's 10,000-"
+                "spots/day auto-disable ceiling (confirmed real, 2026-08-18). If a "
+                "bucket still gets auto-disabled, check its trigger status page on "
+                "hamalert.org and come back here to narrow the entity list further."
+            ) % ENTITY_SPLIT_THRESHOLD
+            recipes.append({
+                "title": "Needed Entities -- Digital",
+                "condition_label": "DXCC is",
+                "condition_value": ", ".join(clean_entities),
+                "mode_filter": DIGITAL_MODES,
+                "note": shared_note + " Digital spots are continuously robot-generated (RBN/skimmer decoders) -- much higher volume than the Voice/CW bucket.",
+            })
+            recipes.append({
+                "title": "Needed Entities -- Voice/CW",
+                "condition_label": "DXCC is",
+                "condition_value": ", ".join(clean_entities),
+                "mode_filter": VOICE_CW_MODES,
+                "note": shared_note + " Human-posted spots only, naturally much lower volume than the Digital bucket.",
+            })
+
+    return recipes
+
+
+# --------------------------------------------------------------------------------------
 # HamAlert listener status/control -- calls the separate dxmon-hamalert service
 # --------------------------------------------------------------------------------------
 
@@ -727,8 +838,39 @@ def page_hamalert_disable():
     return redirect(url_for("page_hamalert"))
 
 
+@app.route("/triggers")
+def page_triggers():
+    prefill_callsign = request.args.get("callsign", "")
+    return render_template(
+        "triggers.html",
+        entities=_no_confirms_entities,
+        prefill_callsign=prefill_callsign,
+        recipes=None,
+    )
+
+
+@app.route("/triggers/generate", methods=["POST"])
+def page_triggers_generate():
+    selected_entities = request.form.getlist("entity")
+    extra_entities = [e.strip() for e in request.form.get("extra_entities", "").split(",")]
+    extra_callsigns = [c.strip() for c in request.form.get("callsigns", "").split(",")]
+
+    recipes = _build_trigger_recipes(
+        callsigns=extra_callsigns,
+        entities=selected_entities + extra_entities,
+    )
+
+    return render_template(
+        "triggers.html",
+        entities=_no_confirms_entities,
+        prefill_callsign="",
+        recipes=recipes,
+    )
+
+
 if __name__ == "__main__":
     _load_watched()
+    _load_no_confirms()
     t = threading.Thread(target=_scheduler_loop, daemon=True)
     t.start()
     app.run(host="0.0.0.0", port=LISTEN_PORT, threaded=True)

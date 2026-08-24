@@ -24,6 +24,11 @@
         Added {{ w.added }}
         {% if w.source_adxo_id %} &middot; linked to ADXO entry {{ w.source_adxo_id }}{% endif %}
       </div>
+      <div class="watch-form" style="margin-top: 0.6rem;">
+        <a href="{{ url_for('page_triggers', callsign=w.callsign) }}" style="color: var(--accent-active); font-size: 0.85rem;">
+          + Create HamAlert trigger for {{ w.callsign }}
+        </a>
+      </div>
     </div>
   {% endfor %}
 {% endblock %}

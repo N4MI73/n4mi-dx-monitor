@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Triggers{% endblock %}
+{% block content %}
+  <p class="meta">
+    Generates ready-to-paste HamAlert trigger recipes. No HamAlert API exists for
+    automation -- you still create the trigger yourself on hamalert.org, this just
+    does the recipe-splitting math for you.
+  </p>
+
+  {% if recipes %}
+    <p class="meta" style="margin-top: 1rem;"><a href="{{ url_for('page_triggers') }}">&larr; Back to builder</a></p>
+    {% for r in recipes %}
+      <div class="card">
+        <div class="card-top">
+          <div class="dxcc">{{ r.title }}</div>
+        </div>
+        <div class="dates">{{ r.condition_label }}: {{ r.condition_value }}</div>
+        {% if r.mode_filter %}<div class="dates">Mode is: {{ r.mode_filter }}</div>{% endif %}
+        <div class="dates">Actions: Telnet</div>
+        <div class="info" style="margin-top: 0.5rem;">{{ r.note }}</div>
+      </div>
+    {% endfor %}
+  {% endif %}
+
+  <div class="card" style="margin-top: 1.5rem;">
+    <div class="dxcc">Build a trigger</div>
+    <form method="post" action="{{ url_for('page_triggers_generate') }}">
+
+      <p class="meta" style="margin-top: 1rem;">Callsigns (comma-separated, e.g. from a Watched entry):</p>
+      <input type="text" name="callsigns" value="{{ prefill_callsign }}" style="width: 100%;"
+             placeholder="RI1FJL, J68TT">
+
+      <p class="meta" style="margin-top: 1rem;">Extra entities not in the list below (comma-separated):</p>
+      <input type="text" name="extra_entities" style="width: 100%;" placeholder="Some Entity Not Listed">
+
+      {% if entities %}
+        <p class="meta" style="margin-top: 1rem;">Never-confirmed entities ({{ entities|length }} loaded):</p>
+        <div style="max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem;">
+          {% for e in entities %}
+            <label style="display: block; padding: 0.15rem 0; font-size: 0.85rem;">
+              <input type="checkbox" name="entity" value="{{ e.entity }}">
+              {{ e.entity }}{% if e.prefix %} <span class="meta" style="display:inline;">({{ e.prefix }})</span>{% endif %}
+            </label>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty">No entity seed file loaded -- add callsigns/entities manually above.</div>
+      {% endif %}
+
+      <div style="margin-top: 1rem;">
+        <button type="submit">Generate recipe(s)</button>
+      </div>
+    </form>
+  </div>
+{% endblock %}
