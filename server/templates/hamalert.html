@@ -50,13 +50,23 @@
   {% for entry in recent %}
     <div class="card">
       <div class="card-top">
-        <span class="callsign">{{ entry.spot.callsign or entry.spot.dx or '(unknown)' }}</span>
-        <span class="dates">{{ entry.received_at }}</span>
+        <span class="callsign">{{ entry.spot.callsign or entry.spot.fullCallsign or '(unknown)' }}</span>
+        <span class="badge {{ '' if entry.spot.source == 'cluster' else 'upcoming' }}">
+          {{ entry.spot.source or '?' }}
+        </span>
       </div>
       <div class="dates">
-        {% if entry.spot.band %}{{ entry.spot.band }}{% endif %}
+        {% if entry.spot.frequency %}{{ entry.spot.frequency }} MHz{% endif %}
+        {% if entry.spot.band %} &middot; {{ entry.spot.band }}{% endif %}
         {% if entry.spot.mode %} &middot; {{ entry.spot.mode }}{% endif %}
-        {% if entry.spot.dxcc %} &middot; {{ entry.spot.dxcc }}{% endif %}
+        &middot; {{ entry.received_at }}
+      </div>
+      {% if entry.spot.comment %}
+        <div class="info" style="color: var(--accent-upcoming);">&ldquo;{{ entry.spot.comment }}&rdquo;</div>
+      {% endif %}
+      <div class="meta">
+        {% if entry.spot.dxcc %}{{ entry.spot.entity or entry.spot.dxcc }} &middot; {% endif %}
+        de {{ entry.spot.spotter or '?' }}{% if entry.spot.spotterEntity %} ({{ entry.spot.spotterEntity }}){% endif %}
       </div>
     </div>
   {% endfor %}
