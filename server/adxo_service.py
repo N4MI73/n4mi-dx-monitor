@@ -882,6 +882,28 @@ def api_beam_test(callsign):
     return jsonify({"callsign": callsign, "station_grid": STATION_GRID, **result})
 
 
+@app.route("/api/preview/status")
+def api_preview_status():
+    """Combined status for the virtual device preview's Config tab. Deliberately
+    server-side proxied rather than having the preview's client-side JS fetch the
+    HamAlert listener directly -- that's a different port/origin (8084 vs this
+    service's 8083), which a browser blocks as cross-origin unless the listener
+    explicitly sets CORS headers (it doesn't, and shouldn't need to just for this).
+    Same server-side-proxy pattern the /hamalert page already uses, just also
+    exposed as JSON here for the preview page's own fetch() calls."""
+    hamalert_status, hamalert_err = _hamalert_get("/api/hamalert/status")
+    with _lock:
+        adxo_updated = _state["updated"]
+        adxo_entry_count = len(_state["entries"])
+    with _watched_lock:
+        watched_count = len(_watched)
+    return jsonify({
+        "adxo": {"updated": adxo_updated, "entry_count": adxo_entry_count},
+        "hamalert": hamalert_status if hamalert_status else {"unreachable": True, "error": hamalert_err},
+        "watched_count": watched_count,
+    })
+
+
 # --------------------------------------------------------------------------------------
 # Curation UI pages (server-rendered, plain HTML forms -- no JS needed for this pass)
 # --------------------------------------------------------------------------------------
@@ -968,6 +990,18 @@ def page_hamalert_enable():
 def page_hamalert_disable():
     _hamalert_post("/api/hamalert/disable")
     return redirect(url_for("page_hamalert"))
+
+
+@app.route("/preview")
+def page_preview():
+    """Virtual DXMon device preview -- an 800x480 in-browser rendering of the
+    Overview/Watched/Needed/Config screens, fed by this server's own live JSON
+    (client-side fetch(), no server-side templating of the data itself). Build
+    order step 6 -- exists to test server-side changes and screen layout before
+    any firmware exists. Needed tab is an honest placeholder (that feature isn't
+    built yet), matching the series' established practice of never faking data
+    for a screen that doesn't have a real backend behind it yet."""
+    return render_template("preview.html")
 
 
 @app.route("/triggers")
