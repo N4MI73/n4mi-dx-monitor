@@ -17,10 +17,12 @@
         <div>
           <span class="badge upcoming" style="margin-right: 0.5rem;">Band/Mode</span>
           <span class="dxcc">{{ w.entity }}</span>
-          &mdash; <span class="callsign">{{ w.band }} {{ w.mode }}</span>
+          {% if w.band or w.mode %}
+            &mdash; <span class="callsign">{{ [w.band, w.mode] | select | join(' ') }}</span>
+          {% endif %}
         </div>
         <form method="post" action="{{ url_for('page_wanted_remove', wanted_id=w.id) }}"
-              onsubmit="return confirm('Remove {{ w.entity }} {{ w.band }} {{ w.mode }} from wanted?');">
+              onsubmit="return confirm('Remove {{ w.entity }} {{ w.band }}{{ w.mode }} from wanted?');">
           <button type="submit" class="remove">Remove</button>
         </form>
       </div>
@@ -28,7 +30,7 @@
       <div class="meta">Added {{ w.added }}</div>
       <div class="watch-form" style="margin-top: 0.6rem;">
         <a href="{{ url_for('page_triggers_for_wanted', wanted_id=w.id) }}" style="color: var(--accent-active); font-size: 0.85rem;">
-          + Create HamAlert trigger for {{ w.entity }} {{ w.band }} {{ w.mode }}
+          + Create HamAlert trigger for {{ w.entity }}{% if w.band %} {{ w.band }}{% endif %}{% if w.mode %} {{ w.mode }}{% endif %}
         </a>
       </div>
     </div>
@@ -38,10 +40,11 @@
     <div class="dxcc">Add a wanted slot</div>
     <form class="watch-form" method="post" action="{{ url_for('page_wanted_add') }}" style="margin-top: 0.7rem;">
       <input type="text" name="entity" placeholder="Entity (e.g. Japan)" required>
-      <input type="text" name="band" placeholder="Band (e.g. 160m)" required>
-      <input type="text" name="mode" placeholder="Mode (e.g. CW)" required>
+      <input type="text" name="band" placeholder="Band (optional, e.g. 160m)">
+      <input type="text" name="mode" placeholder="Mode (optional, e.g. CW)">
       <input type="text" name="note" placeholder="note (optional)">
       <button type="submit">+ Add</button>
     </form>
+    <p class="meta" style="margin-top: 0.5rem;">At least one of band or mode is required.</p>
   </div>
 {% endblock %}

@@ -509,11 +509,17 @@ def _save_wanted():
 
 
 def _add_wanted(entity, band, mode, note=""):
+    """Entity is always required. Band and mode are each individually optional, but
+    at least one of the two must be given -- Dan's clarification 2026-08-25: he's
+    more often chasing a specific band OR mode gap than both at once, but an entity
+    with neither specified is just a plain Needed entity, not a real Wanted target."""
     entity = (entity or "").strip()
     band = (band or "").strip()
     mode = (mode or "").strip()
-    if not entity or not band or not mode:
-        return None, "Entity, band, and mode are all required."
+    if not entity:
+        return None, "Entity is required."
+    if not band and not mode:
+        return None, "At least one of band or mode is required."
 
     entry = {
         "id": uuid.uuid4().hex[:12],
@@ -638,14 +644,18 @@ def _build_trigger_recipes(callsigns, entities):
 
 
 def _build_wanted_trigger_recipe(entity, band, mode):
-    """Single recipe for one Wanted entry (entity+band+mode). Confirmed 2026-08-25
-    (screenshot) that HamAlert's own trigger editor supports combining DXCC, Band, and
-    Mode conditions together in one trigger. Uses a `conditions` list rather than the
-    single condition_label/condition_value shape _build_trigger_recipes uses -- kept
-    as a separate, additive format so the already-tested Watched/Needed recipe path
-    isn't touched. No splitting logic needed: an entity+band+mode combination is about
-    as narrow as a HamAlert trigger gets, almost certainly lower volume than even a
-    single watched callsign.
+    """Single recipe for one Wanted entry. Confirmed 2026-08-25 (screenshot) that
+    HamAlert's own trigger editor supports combining DXCC, Band, and Mode conditions
+    together in one trigger. Uses a `conditions` list rather than the single
+    condition_label/condition_value shape _build_trigger_recipes uses -- kept as a
+    separate, additive format so the already-tested Watched/Needed recipe path isn't
+    touched. No splitting logic needed: even the broadest Wanted case (entity + one
+    of band/mode) is about as narrow as a HamAlert trigger gets, almost certainly
+    lower volume than even a single watched callsign.
+
+    Band and mode are each independently optional (Dan's clarification 2026-08-25 --
+    he's more often chasing a specific band OR mode gap than both at once), but at
+    least one of the two must be present, mirroring _add_wanted's own validation.
 
     Deliberately does NOT use HamAlert's own \"Band slots\" condition (which draws from
     Club Log's automated missing-slot data) -- see WANTED_FILE's module-level comment
@@ -653,19 +663,23 @@ def _build_wanted_trigger_recipe(entity, band, mode):
     entity = (entity or "").strip()
     band = (band or "").strip()
     mode = (mode or "").strip()
-    if not entity or not band or not mode:
+    if not entity or (not band and not mode):
         return None
 
+    conditions = [{"label": "DXCC is", "value": entity}]
+    if band:
+        conditions.append({"label": "Band is", "value": band})
+    if mode:
+        conditions.append({"label": "Mode is", "value": mode})
+
+    title_parts = [entity] + [p for p in (band, mode) if p]
+
     return {
-        "title": f"Wanted: {entity} {band} {mode}",
-        "conditions": [
-            {"label": "DXCC is", "value": entity},
-            {"label": "Band is", "value": band},
-            {"label": "Mode is", "value": mode},
-        ],
+        "title": f"Wanted: {' '.join(title_parts)}",
+        "conditions": conditions,
         "note": (
             "Select the entity BY NAME in HamAlert's own DXCC picker, not by prefix. "
-            "Volume expected to be very low -- one entity, one band, one mode."
+            "Volume expected to be very low."
         ),
     }
 
