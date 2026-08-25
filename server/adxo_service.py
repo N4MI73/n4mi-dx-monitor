@@ -934,13 +934,27 @@ def page_watch_remove(watched_id):
 @app.route("/hamalert")
 def page_hamalert():
     status, status_err = _hamalert_get("/debug")
-    recent, recent_err = _hamalert_get("/api/hamalert/recent")
+    recent_resp, recent_err = _hamalert_get("/api/hamalert/recent")
+    recent = recent_resp.get("spots", []) if recent_resp else []
+
+    # Distinct callsigns currently appearing in the spot feed, most-recently-seen
+    # first, each with a beam heading -- a quick "where do I point the beam" view
+    # independent of the Watched list, per Dan's request 2026-08-25.
+    seen = set()
+    beam_headings = []
+    for entry in recent:
+        callsign = entry.get("spot", {}).get("callsign")
+        if callsign and callsign not in seen:
+            seen.add(callsign)
+            beam_headings.append({"callsign": callsign, "beam": _get_heading_to_callsign(callsign)})
+
     return render_template(
         "hamalert.html",
         status=status,
         status_err=status_err,
-        recent=(recent.get("spots", []) if recent else []),
+        recent=recent,
         recent_err=recent_err,
+        beam_headings=beam_headings,
     )
 
 

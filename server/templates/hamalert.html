@@ -1,73 +1,99 @@
 {% extends "base.html" %}
 {% block title %}HamAlert{% endblock %}
 {% block content %}
-  {% if status_err %}
-    <div class="card" style="border-left: 3px solid var(--danger);">
-      <div class="dxcc">HamAlert listener unreachable</div>
-      <div class="info">Couldn't reach {{ status_err }}. Is the dxmon-hamalert stack running?</div>
-    </div>
-  {% else %}
-    <div class="card {{ 'active-now' if status.connected else '' }}">
-      <div class="card-top">
-        <div class="dxcc">HamAlert Listener</div>
-        <span class="badge {{ '' if status.enabled else 'upcoming' }}">
-          {{ 'Enabled' if status.enabled else 'Disabled' }}
-        </span>
-      </div>
-      <div class="dates">
-        Connected: {{ 'yes' if status.connected else 'no' }}
-        &middot; Logged in: {{ 'yes' if status.logged_in else 'no' }}
-        &middot; JSON mode: {{ 'yes' if status.json_mode else 'no' }}
-      </div>
-      <div class="meta">
-        Last connected: {{ status.last_connected_at or 'never' }}<br>
-        Last spot received: {{ status.last_spot_at or 'none yet' }}<br>
-        Last heartbeat reply: {{ status.last_heartbeat_at or 'none yet' }}<br>
-        Reconnects so far: {{ status.reconnect_count }}
-        {% if status.last_error %}<br><span style="color: var(--danger);">Last error: {{ status.last_error }}</span>{% endif %}
-      </div>
+<div style="display: flex; gap: 1.5rem; align-items: flex-start; flex-wrap: wrap;">
+  <div style="flex: 1 1 500px; min-width: 0;">
 
-      <form class="watch-form" method="post"
-            action="{{ url_for('page_hamalert_disable') if status.enabled else url_for('page_hamalert_enable') }}"
-            {% if status.enabled %}onsubmit="return confirm('Disable the HamAlert listener? No spots will be received until re-enabled.');"{% endif %}>
-        {% if status.enabled %}
-          <button type="submit" class="remove">Disable</button>
-        {% else %}
-          <button type="submit">Enable</button>
+    {% if status_err %}
+      <div class="card" style="border-left: 3px solid var(--danger);">
+        <div class="dxcc">HamAlert listener unreachable</div>
+        <div class="info">Couldn't reach {{ status_err }}. Is the dxmon-hamalert stack running?</div>
+      </div>
+    {% else %}
+      <div class="card {{ 'active-now' if status.connected else '' }}">
+        <div class="card-top">
+          <div class="dxcc">HamAlert Listener</div>
+          <span class="badge {{ '' if status.enabled else 'upcoming' }}">
+            {{ 'Enabled' if status.enabled else 'Disabled' }}
+          </span>
+        </div>
+        <div class="dates">
+          Connected: {{ 'yes' if status.connected else 'no' }}
+          &middot; Logged in: {{ 'yes' if status.logged_in else 'no' }}
+          &middot; JSON mode: {{ 'yes' if status.json_mode else 'no' }}
+        </div>
+        <div class="meta">
+          Last connected: {{ status.last_connected_at or 'never' }}<br>
+          Last spot received: {{ status.last_spot_at or 'none yet' }}<br>
+          Last heartbeat reply: {{ status.last_heartbeat_at or 'none yet' }}<br>
+          Reconnects so far: {{ status.reconnect_count }}
+          {% if status.last_error %}<br><span style="color: var(--danger);">Last error: {{ status.last_error }}</span>{% endif %}
+        </div>
+
+        <form class="watch-form" method="post"
+              action="{{ url_for('page_hamalert_disable') if status.enabled else url_for('page_hamalert_enable') }}"
+              {% if status.enabled %}onsubmit="return confirm('Disable the HamAlert listener? No spots will be received until re-enabled.');"{% endif %}>
+          {% if status.enabled %}
+            <button type="submit" class="remove">Disable</button>
+          {% else %}
+            <button type="submit">Enable</button>
+          {% endif %}
+        </form>
+      </div>
+    {% endif %}
+
+    <p class="meta" style="margin-top: 1.5rem;">Recent matched spots (from HamAlert's own trigger(s) -- this page shows what it already decided to send, no filtering happens here).</p>
+
+    {% if recent_err %}
+      <div class="empty">Can't load recent spots -- listener unreachable.</div>
+    {% elif not recent %}
+      <div class="empty">No spots received yet.</div>
+    {% endif %}
+
+    {% for entry in recent %}
+      <div class="card">
+        <div class="card-top">
+          <span class="callsign">{{ entry.spot.callsign or entry.spot.fullCallsign or '(unknown)' }}</span>
+          <span class="badge {{ '' if entry.spot.source == 'cluster' else 'upcoming' }}">
+            {{ entry.spot.source or '?' }}
+          </span>
+        </div>
+        <div class="dates">
+          {% if entry.spot.frequency %}{{ entry.spot.frequency }} MHz{% endif %}
+          {% if entry.spot.band %} &middot; {{ entry.spot.band }}{% endif %}
+          {% if entry.spot.mode %} &middot; {{ entry.spot.mode }}{% endif %}
+          &middot; {{ entry.received_at }}
+        </div>
+        {% if entry.spot.comment %}
+          <div class="info" style="color: var(--accent-upcoming);">&ldquo;{{ entry.spot.comment }}&rdquo;</div>
         {% endif %}
-      </form>
-    </div>
-  {% endif %}
+        <div class="meta">
+          {% if entry.spot.dxcc %}{{ entry.spot.entity or entry.spot.dxcc }} &middot; {% endif %}
+          de {{ entry.spot.spotter or '?' }}{% if entry.spot.spotterEntity %} ({{ entry.spot.spotterEntity }}){% endif %}
+        </div>
+      </div>
+    {% endfor %}
 
-  <p class="meta" style="margin-top: 1.5rem;">Recent matched spots (from HamAlert's own trigger(s) -- this page shows what it already decided to send, no filtering happens here).</p>
+  </div>
 
-  {% if recent_err %}
-    <div class="empty">Can't load recent spots -- listener unreachable.</div>
-  {% elif not recent %}
-    <div class="empty">No spots received yet.</div>
-  {% endif %}
-
-  {% for entry in recent %}
+  <aside style="flex: 0 0 220px; min-width: 200px;">
     <div class="card">
-      <div class="card-top">
-        <span class="callsign">{{ entry.spot.callsign or entry.spot.fullCallsign or '(unknown)' }}</span>
-        <span class="badge {{ '' if entry.spot.source == 'cluster' else 'upcoming' }}">
-          {{ entry.spot.source or '?' }}
-        </span>
-      </div>
-      <div class="dates">
-        {% if entry.spot.frequency %}{{ entry.spot.frequency }} MHz{% endif %}
-        {% if entry.spot.band %} &middot; {{ entry.spot.band }}{% endif %}
-        {% if entry.spot.mode %} &middot; {{ entry.spot.mode }}{% endif %}
-        &middot; {{ entry.received_at }}
-      </div>
-      {% if entry.spot.comment %}
-        <div class="info" style="color: var(--accent-upcoming);">&ldquo;{{ entry.spot.comment }}&rdquo;</div>
+      <div class="dxcc" style="margin-bottom: 0.6rem;">Beam Headings</div>
+      {% if not beam_headings %}
+        <div class="meta">No spots yet.</div>
+      {% else %}
+        {% for b in beam_headings %}
+          <div style="padding: 0.4rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
+            <span class="callsign" style="font-size: 0.9rem;">{{ b.callsign }}</span><br>
+            {% if b.beam %}
+              <span class="meta">{{ b.beam.heading_deg }}&deg; &middot; {{ b.beam.distance_km }} km</span>
+            {% else %}
+              <span class="meta">no heading available</span>
+            {% endif %}
+          </div>
+        {% endfor %}
       {% endif %}
-      <div class="meta">
-        {% if entry.spot.dxcc %}{{ entry.spot.entity or entry.spot.dxcc }} &middot; {% endif %}
-        de {{ entry.spot.spotter or '?' }}{% if entry.spot.spotterEntity %} ({{ entry.spot.spotterEntity }}){% endif %}
-      </div>
     </div>
-  {% endfor %}
+  </aside>
+</div>
 {% endblock %}
