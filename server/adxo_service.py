@@ -18,6 +18,7 @@ import csv
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -74,6 +75,12 @@ NO_CONFIRMS_FILE = os.environ.get("NO_CONFIRMS_FILE", "no_confirms.csv")
 # never split -- Dan's own stated usage (2-3 watched callsigns, rarely more) plus the
 # inherently low volume of exact-callsign matching means splitting isn't needed there.
 ENTITY_SPLIT_THRESHOLD = 5
+
+# Beam heading -- Dan's station grid square, configurable rather than hardcoded per the
+# project's own convention. Accuracy ceiling already accepted (2026-08-15): country-file
+# lookups typically resolve to an entity's approximate reference point, not the exact
+# operator location -- judged sufficient given Dan's hexbeam beamwidth.
+STATION_GRID = os.environ.get("STATION_GRID", "EM83")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -579,6 +586,92 @@ def _hamalert_post(path):
 
 
 # --------------------------------------------------------------------------------------
+# Beam heading -- great-circle bearing/distance from STATION_GRID to a watched
+# callsign's DXCC entity, via pyhamtools' country-file lookup.
+# --------------------------------------------------------------------------------------
+
+_lookuplib = None
+_callinfo = None
+_beam_heading_init_failed = False
+_station_latlon = None
+
+
+def _bearing_deg(lat1, lon1, lat2, lon2):
+    """Great-circle initial bearing, in degrees (0-360), from point 1 to point 2.
+    Matches pyhamtools.locator.calculate_heading's own internal formula exactly
+    (verified against its documented example, JN48QM -> QF67bf = 74.3136 deg) --
+    reimplemented directly against lat/lon rather than calling that function, since
+    it only accepts Maidenhead locator strings and Callinfo.get_lat_long() already
+    gives us lat/lon directly; round-tripping through a locator string would only
+    add unnecessary precision loss."""
+    r_lat1, r_lat2 = math.radians(lat1), math.radians(lat2)
+    d_lon = math.radians(lon2 - lon1)
+    b = math.atan2(
+        math.sin(d_lon) * math.cos(r_lat2),
+        math.cos(r_lat1) * math.sin(r_lat2) - math.sin(r_lat1) * math.cos(r_lat2) * math.cos(d_lon),
+    )
+    bd = math.degrees(b)
+    _, bn = divmod(bd + 360, 360)
+    return bn
+
+
+def _distance_km(lat1, lon1, lat2, lon2):
+    """Great-circle distance in km via the haversine formula."""
+    R = 6371.0
+    r_lat1, r_lat2 = math.radians(lat1), math.radians(lat2)
+    d_lat = r_lat2 - r_lat1
+    d_lon = math.radians(lon2 - lon1)
+    a = math.sin(d_lat / 2) ** 2 + math.cos(r_lat1) * math.cos(r_lat2) * math.sin(d_lon / 2) ** 2
+    c = 2 * math.asin(math.sqrt(a))
+    return R * c
+
+
+def _init_beam_heading():
+    """Lazily initializes pyhamtools' country-file lookup (downloads/caches the
+    database once at first use, not per-request -- matches the project's established
+    'no live per-lookup external calls' pattern). A failure here (e.g. no network
+    path to country-files.com) disables heading calculation gracefully rather than
+    crashing the service -- every /api/dxmon/watched response still works, just
+    without a heading field, same degrade-gracefully approach used everywhere else
+    in this service."""
+    global _lookuplib, _callinfo, _beam_heading_init_failed, _station_latlon
+    if _callinfo is not None or _beam_heading_init_failed:
+        return
+    try:
+        from pyhamtools import LookupLib, Callinfo
+        from pyhamtools.locator import locator_to_latlong
+
+        _lookuplib = LookupLib(lookuptype="countryfile")
+        _callinfo = Callinfo(_lookuplib)
+        _station_latlon = locator_to_latlong(STATION_GRID)
+        log.info(
+            "Beam heading initialized -- station grid %s -> lat/lon %s",
+            STATION_GRID, _station_latlon,
+        )
+    except Exception as exc:  # noqa: BLE001 -- any failure here just disables the feature
+        log.error("Beam heading unavailable (station grid %s): %s", STATION_GRID, exc)
+        _beam_heading_init_failed = True
+
+
+def _get_heading_to_callsign(callsign):
+    """Returns {'heading_deg': float, 'distance_km': int} or None if unavailable
+    (lookup not initialized, unknown callsign, or any other failure). Never raises --
+    a missing heading should never break the rest of /api/dxmon/watched's response."""
+    _init_beam_heading()
+    if _callinfo is None or not callsign:
+        return None
+    try:
+        target = _callinfo.get_lat_long(callsign)
+        my_lat, my_lon = _station_latlon
+        heading = _bearing_deg(my_lat, my_lon, target["latitude"], target["longitude"])
+        distance = _distance_km(my_lat, my_lon, target["latitude"], target["longitude"])
+        return {"heading_deg": round(heading, 1), "distance_km": round(distance)}
+    except Exception as exc:  # noqa: BLE001 -- unknown callsign, bad data, etc.
+        log.debug("No heading available for %r: %s", callsign, exc)
+        return None
+
+
+# --------------------------------------------------------------------------------------
 # Flask app
 # --------------------------------------------------------------------------------------
 
@@ -745,6 +838,7 @@ def _build_dxmon_watched():
             "note": w.get("note", ""),
             "adxo": adxo_obj,
             "last_spot": _find_last_spot_for_callsign(w["callsign"], recent_spots),
+            "beam": _get_heading_to_callsign(w["callsign"]),
         })
 
     # Layered stable sort, least-significant key first -- see _sort_key_group's
@@ -771,6 +865,23 @@ def api_dxmon_watched():
     })
 
 
+@app.route("/api/beam/<callsign>")
+def api_beam_test(callsign):
+    """Standalone test endpoint for the beam heading lookup, independent of the
+    watchlist -- useful for confirming the live country-file lookup actually works
+    against real callsigns once deployed (this can't be tested from Claude's own
+    sandbox, which has no network path to country-files.com)."""
+    result = _get_heading_to_callsign(callsign)
+    if result is None:
+        return jsonify({
+            "callsign": callsign,
+            "beam": None,
+            "note": "No result -- either the lookup isn't initialized (check server logs "
+                    "for a country-files.com fetch error) or the callsign wasn't found.",
+        }), 404
+    return jsonify({"callsign": callsign, "station_grid": STATION_GRID, **result})
+
+
 # --------------------------------------------------------------------------------------
 # Curation UI pages (server-rendered, plain HTML forms -- no JS needed for this pass)
 # --------------------------------------------------------------------------------------
@@ -790,7 +901,14 @@ def page_index():
 def page_watched():
     with _watched_lock:
         entries = sorted(_watched, key=lambda w: w["added"], reverse=True)
-    return render_template("watched.html", entries=entries)
+    # Copy each entry (never mutate _watched itself) and attach beam heading for
+    # display -- kept separate from the persisted watched.json record.
+    enriched = []
+    for w in entries:
+        e = dict(w)
+        e["beam"] = _get_heading_to_callsign(w["callsign"])
+        enriched.append(e)
+    return render_template("watched.html", entries=enriched)
 
 
 @app.route("/watch", methods=["POST"])
