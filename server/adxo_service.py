@@ -64,6 +64,14 @@ USER_AGENT = "N4MI-DXMon/1.0 (+https://github.com/N4MI73/n4mi-dx-monitor; contac
 # otherwise every container rebuild silently wipes the watchlist.
 WATCHED_FILE = os.environ.get("WATCHED_FILE", "/app/data/watched.json")
 
+# Wanted -- Dan's small, manually-curated list of specific entity+band+mode gaps on
+# already-confirmed entities. Deliberately NOT sourced from HamAlert's own "Band slots"
+# condition, which draws from Club Log's automated missing-slot data -- that inherits
+# the same worked-vs-LoTW-confirmed precision gap already documented for the Needed-
+# entity feature ("0-slots mystery", 2026-08-16). Wanted stays fully Dan-curated for
+# the same reason Needed's entity list is sourced from his own LoTW export.
+WANTED_FILE = os.environ.get("WANTED_FILE", "/app/data/wanted.json")
+
 # Trigger Builder -- never-confirmed entity seed list. A static file Dan replaces
 # manually whenever he re-exports from his LoTW DXCC Credit Analyzer (no live sync --
 # matches the already-decided "Dan's own export is the source of truth" design).
@@ -463,6 +471,75 @@ def _remove_watched(watched_id):
 
 
 # --------------------------------------------------------------------------------------
+# Wanted list -- Dan's small, manually-curated entity+band+mode gaps. Mirrors the
+# Watched list's structure exactly (own file, own lock, same load/save/add/remove
+# pattern) -- deliberately not merged into the Watched data model, since the matching
+# key is fundamentally different (entity+band+mode, not a callsign).
+# --------------------------------------------------------------------------------------
+
+_wanted_lock = threading.Lock()
+_wanted = []  # list of dicts, loaded from WANTED_FILE at startup
+
+
+def _load_wanted():
+    global _wanted
+    try:
+        with open(WANTED_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            _wanted = data
+            log.info("Loaded %d wanted entries from %s", len(_wanted), WANTED_FILE)
+        else:
+            log.error("Wanted file did not contain a list -- starting empty, not overwriting")
+    except FileNotFoundError:
+        log.info("No existing wanted file at %s -- starting empty", WANTED_FILE)
+    except (json.JSONDecodeError, OSError) as exc:
+        log.error("Failed to load wanted file (%s) -- starting empty in memory, "
+                   "NOT overwriting the file on disk: %s", WANTED_FILE, exc)
+        _wanted = []
+
+
+def _save_wanted():
+    """Atomic write -- same pattern as _save_watched()."""
+    os.makedirs(os.path.dirname(WANTED_FILE), exist_ok=True)
+    tmp_path = WANTED_FILE + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(_wanted, f, indent=2)
+    os.replace(tmp_path, WANTED_FILE)
+
+
+def _add_wanted(entity, band, mode, note=""):
+    entity = (entity or "").strip()
+    band = (band or "").strip()
+    mode = (mode or "").strip()
+    if not entity or not band or not mode:
+        return None, "Entity, band, and mode are all required."
+
+    entry = {
+        "id": uuid.uuid4().hex[:12],
+        "entity": entity,
+        "band": band,
+        "mode": mode,
+        "note": (note or "").strip(),
+        "added": datetime.now(EASTERN).isoformat(),
+    }
+    with _wanted_lock:
+        _wanted.append(entry)
+        _save_wanted()
+    return entry, None
+
+
+def _remove_wanted(wanted_id):
+    with _wanted_lock:
+        before = len(_wanted)
+        _wanted[:] = [w for w in _wanted if w["id"] != wanted_id]
+        removed = len(_wanted) != before
+        if removed:
+            _save_wanted()
+    return removed
+
+
+# --------------------------------------------------------------------------------------
 # Trigger Builder -- generates ready-to-paste HamAlert trigger recipes
 # --------------------------------------------------------------------------------------
 
@@ -558,6 +635,39 @@ def _build_trigger_recipes(callsigns, entities):
             })
 
     return recipes
+
+
+def _build_wanted_trigger_recipe(entity, band, mode):
+    """Single recipe for one Wanted entry (entity+band+mode). Confirmed 2026-08-25
+    (screenshot) that HamAlert's own trigger editor supports combining DXCC, Band, and
+    Mode conditions together in one trigger. Uses a `conditions` list rather than the
+    single condition_label/condition_value shape _build_trigger_recipes uses -- kept
+    as a separate, additive format so the already-tested Watched/Needed recipe path
+    isn't touched. No splitting logic needed: an entity+band+mode combination is about
+    as narrow as a HamAlert trigger gets, almost certainly lower volume than even a
+    single watched callsign.
+
+    Deliberately does NOT use HamAlert's own \"Band slots\" condition (which draws from
+    Club Log's automated missing-slot data) -- see WANTED_FILE's module-level comment
+    for why Wanted stays fully Dan-curated instead."""
+    entity = (entity or "").strip()
+    band = (band or "").strip()
+    mode = (mode or "").strip()
+    if not entity or not band or not mode:
+        return None
+
+    return {
+        "title": f"Wanted: {entity} {band} {mode}",
+        "conditions": [
+            {"label": "DXCC is", "value": entity},
+            {"label": "Band is", "value": band},
+            {"label": "Mode is", "value": mode},
+        ],
+        "note": (
+            "Select the entity BY NAME in HamAlert's own DXCC picker, not by prefix. "
+            "Volume expected to be very low -- one entity, one band, one mode."
+        ),
+    }
 
 
 # --------------------------------------------------------------------------------------
@@ -953,6 +1063,77 @@ def page_watch_remove(watched_id):
     return redirect(url_for("page_watched"))
 
 
+@app.route("/wanted")
+def page_wanted():
+    with _wanted_lock:
+        entries = sorted(_wanted, key=lambda w: w["added"], reverse=True)
+    return render_template("wanted.html", entries=entries)
+
+
+@app.route("/wanted/add", methods=["POST"])
+def page_wanted_add():
+    _add_wanted(
+        entity=request.form.get("entity"),
+        band=request.form.get("band"),
+        mode=request.form.get("mode"),
+        note=request.form.get("note"),
+    )
+    return redirect(url_for("page_wanted"))
+
+
+@app.route("/wanted/remove/<wanted_id>", methods=["POST"])
+def page_wanted_remove(wanted_id):
+    _remove_wanted(wanted_id)
+    return redirect(url_for("page_wanted"))
+
+
+@app.route("/api/wanted", methods=["GET"])
+def api_wanted_list():
+    with _wanted_lock:
+        return jsonify({"entries": list(_wanted), "count": len(_wanted)})
+
+
+@app.route("/api/wanted", methods=["POST"])
+def api_wanted_add():
+    payload = request.get_json(silent=True) or {}
+    entry, error = _add_wanted(
+        entity=payload.get("entity"),
+        band=payload.get("band"),
+        mode=payload.get("mode"),
+        note=payload.get("note"),
+    )
+    if error:
+        return jsonify({"error": error}), 400
+    return jsonify(entry), 201
+
+
+@app.route("/api/wanted/<wanted_id>", methods=["DELETE"])
+def api_wanted_remove(wanted_id):
+    removed = _remove_wanted(wanted_id)
+    if not removed:
+        return jsonify({"error": "not found"}), 404
+    return jsonify({"removed": wanted_id})
+
+
+@app.route("/triggers/wanted/<wanted_id>")
+def page_triggers_for_wanted(wanted_id):
+    """Create-Trigger link from a Wanted entry -- goes straight to the generated
+    recipe, since all three fields (entity/band/mode) are already known. No form
+    step needed, unlike the general /triggers builder."""
+    with _wanted_lock:
+        entry = next((w for w in _wanted if w["id"] == wanted_id), None)
+    if entry is None:
+        return "Wanted entry not found", 404
+    recipe = _build_wanted_trigger_recipe(entry["entity"], entry["band"], entry["mode"])
+    recipes = [recipe] if recipe else []
+    return render_template(
+        "triggers.html",
+        entities=_no_confirms_entities,
+        prefill_callsign="",
+        recipes=recipes,
+    )
+
+
 @app.route("/hamalert")
 def page_hamalert():
     status, status_err = _hamalert_get("/debug")
@@ -1037,6 +1218,7 @@ def page_triggers_generate():
 if __name__ == "__main__":
     _load_watched()
     _load_no_confirms()
+    _load_wanted()
     t = threading.Thread(target=_scheduler_loop, daemon=True)
     t.start()
     app.run(host="0.0.0.0", port=LISTEN_PORT, threaded=True)

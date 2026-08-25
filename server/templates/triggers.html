@@ -19,8 +19,14 @@
         <div class="card-top">
           <div class="dxcc">{{ r.title }}</div>
         </div>
-        <div class="dates">{{ r.condition_label }}: {{ r.condition_value }}</div>
-        {% if r.mode_filter %}<div class="dates">Mode is: {{ r.mode_filter }}</div>{% endif %}
+        {% if r.conditions %}
+          {% for c in r.conditions %}
+            <div class="dates">{{ c.label }}: {{ c.value }}</div>
+          {% endfor %}
+        {% else %}
+          <div class="dates">{{ r.condition_label }}: {{ r.condition_value }}</div>
+          {% if r.mode_filter %}<div class="dates">Mode is: {{ r.mode_filter }}</div>{% endif %}
+        {% endif %}
         <div class="dates">Actions: Telnet</div>
         <div class="info" style="margin-top: 0.5rem;">{{ r.note }}</div>
       </div>

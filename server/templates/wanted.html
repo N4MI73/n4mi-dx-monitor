@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Wanted{% endblock %}
+{% block content %}
+  <p class="meta">
+    Specific band/mode gaps on entities you've already confirmed -- distinct from
+    Needed (never-confirmed entities). Always a small, manually-curated list.
+  </p>
+  <p class="meta">{{ entries|length }} wanted slot(s).</p>
+
+  {% if not entries %}
+    <div class="empty">Nothing wanted yet -- add one below.</div>
+  {% endif %}
+
+  {% for w in entries %}
+    <div class="card">
+      <div class="card-top">
+        <div>
+          <span class="badge upcoming" style="margin-right: 0.5rem;">Band/Mode</span>
+          <span class="dxcc">{{ w.entity }}</span>
+          &mdash; <span class="callsign">{{ w.band }} {{ w.mode }}</span>
+        </div>
+        <form method="post" action="{{ url_for('page_wanted_remove', wanted_id=w.id) }}"
+              onsubmit="return confirm('Remove {{ w.entity }} {{ w.band }} {{ w.mode }} from wanted?');">
+          <button type="submit" class="remove">Remove</button>
+        </form>
+      </div>
+      {% if w.note %}<div class="info">{{ w.note }}</div>{% endif %}
+      <div class="meta">Added {{ w.added }}</div>
+      <div class="watch-form" style="margin-top: 0.6rem;">
+        <a href="{{ url_for('page_triggers_for_wanted', wanted_id=w.id) }}" style="color: var(--accent-active); font-size: 0.85rem;">
+          + Create HamAlert trigger for {{ w.entity }} {{ w.band }} {{ w.mode }}
+        </a>
+      </div>
+    </div>
+  {% endfor %}
+
+  <div class="card" style="margin-top: 1.5rem;">
+    <div class="dxcc">Add a wanted slot</div>
+    <form class="watch-form" method="post" action="{{ url_for('page_wanted_add') }}" style="margin-top: 0.7rem;">
+      <input type="text" name="entity" placeholder="Entity (e.g. Japan)" required>
+      <input type="text" name="band" placeholder="Band (e.g. 160m)" required>
+      <input type="text" name="mode" placeholder="Mode (e.g. CW)" required>
+      <input type="text" name="note" placeholder="note (optional)">
+      <button type="submit">+ Add</button>
+    </form>
+  </div>
+{% endblock %}

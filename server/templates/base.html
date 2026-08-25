@@ -166,6 +166,7 @@
     <nav>
       <a href="{{ url_for('page_index') }}" class="{{ 'active' if request.path == '/' else '' }}">Browse ADXO</a>
       <a href="{{ url_for('page_watched') }}" class="{{ 'active' if request.path == '/watched' else '' }}">Watched</a>
+      <a href="{{ url_for('page_wanted') }}" class="{{ 'active' if request.path == '/wanted' else '' }}">Wanted</a>
       <a href="{{ url_for('page_hamalert') }}" class="{{ 'active' if request.path == '/hamalert' else '' }}">HamAlert</a>
       <a href="{{ url_for('page_triggers') }}" class="{{ 'active' if request.path == '/triggers' else '' }}">Triggers</a>
       <a href="{{ url_for('page_preview') }}" class="{{ 'active' if request.path == '/preview' else '' }}">Preview</a>
