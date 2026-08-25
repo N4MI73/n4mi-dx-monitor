@@ -10,9 +10,10 @@ operational question at a glance:
 - **[APRSMon](https://github.com/N4MI73/n4mi-aprs-monitor)** -- "What's happening around me?" (local weather + APRS activity)
 - **DXMon** (this repo) -- "Is a DX station I care about active right now, and where should I listen?"
 
-> **Status: actively developed, not yet operational.** DXMon's backend (ADXO ingestion,
-> a web curation UI, and a real-time HamAlert listener) is fully built and running
-> against live data. The device firmware doesn't exist yet -- see
+> **Status: actively developed, not yet operational.** DXMon's backend -- ADXO
+> ingestion, a web curation UI, a real-time HamAlert listener, a Trigger Builder,
+> beam heading, and an in-browser virtual device preview -- is fully built and
+> confirmed against live data. The device firmware doesn't exist yet -- see
 > [Current Status](#current-status) below.
 
 ## What DXMon does (planned)
@@ -27,6 +28,14 @@ operational question at a glance:
   callsign or DXCC entity -- HamAlert has no API for creating triggers automatically,
   so this does the recipe-splitting math (avoiding HamAlert's spot-volume limits) and
   you paste the result into hamalert.org yourself.
+- **Beam heading:** great-circle bearing and distance from the operator's station to
+  any watched callsign, computed via `pyhamtools` against Club Log/country-files.com
+  reference data. Shown on the Watched page and as a quick side-panel lookup for any
+  callsign currently appearing in the live spot feed.
+- **Virtual device preview:** an in-browser, 800x480 rendering of the actual device
+  screens (Overview/Watched/Needed/Config, with the real tab navigation), fed by the
+  same JSON the firmware will eventually consume -- lets screen layout and data flow
+  get tested and iterated on well before any hardware is involved.
 - All curation (deciding what to watch, entity sourcing/ranking, building triggers)
   happens through a LAN-only web UI -- the device itself is a thin display/poll
   client, not where you manage configuration. **This web UI is turning out to be
@@ -59,7 +68,8 @@ the series, not scope creep.
 ```
 n4mi-dx-monitor/
 ├── server/        -- backend (Flask): ADXO ingestion, web curation UI, HamAlert
-│                     listener, Trigger Builder. Built, deployed, running.
+│                     listener, Trigger Builder, beam heading, virtual preview.
+│                     Built, deployed, running.
 ├── firmware/       -- ESP32-S3 / LVGL firmware. Not yet started.
 └── README.md       -- this file
 ```
@@ -70,11 +80,12 @@ n4mi-dx-monitor/
 |---|---|
 | ADXO ingestion service | Built, deployed, confirmed working against live data |
 | Web curation UI (browse ADXO, manage watchlist) | Built, deployed, confirmed working -- including persistence across a container restart |
-| HamAlert Telnet listener (real-time spot matching) | Built, deployed, confirmed working against live spots (band/mode/frequency/source/comment/spotter), including an enable/disable toggle for extended absences from the shack |
+| HamAlert Telnet listener (real-time spot matching) | Built, deployed, confirmed working against live spots, including an enable/disable toggle for extended absences from the shack |
 | Trigger Builder (generates ready-to-paste HamAlert trigger recipes) | Built, deployed, confirmed working |
-| Merged watched-status JSON (`/api/dxmon/watched`) | Built, deployed, confirmed working -- joins watchlist + ADXO status + latest HamAlert spot per entry |
+| Merged watched-status JSON (`/api/dxmon/watched`) | Built, deployed, confirmed working -- joins watchlist + ADXO status + latest HamAlert spot + beam heading per entry |
+| Beam heading (great-circle bearing/distance to any watched callsign) | Built, tested, **confirmed live via screenshot** |
+| Virtual device preview (`/preview`, in-browser, for testing before firmware) | Built and tested; live visual confirmation pending |
 | Needed-entity feature | Not yet built |
-| Virtual device preview (in-browser, for testing before firmware) | Not yet built |
 | Firmware | Not started -- hardware (Waveshare ESP32-S3-Touch-LCD-4.3B) has reached the US, expected soon |
 
 This project follows the series' established practice: design before code, real-data
@@ -83,19 +94,19 @@ here should be assumed device-ready until the firmware section above says so.
 
 ## Planned next
 
-1. **Beam heading to target station** -- using `pyhamtools` and Club Log's `cty.xml`
-   country-file data against Dan's known grid square (EM83); self-contained, no
-   external dependencies still pending.
-2. **Virtual DXMon preview** -- an in-browser rendering of the device screens, fed by
-   the same JSON the firmware will eventually consume. The Watched-side data shape is
-   effectively already proven via `/api/dxmon/watched`; the Needed side awaits that
-   feature's own build.
-3. **Alert when a needed (never-confirmed) DXCC entity appears on ADXO** -- currently
-   you'd only notice this by checking the Needed tab; a proactive alert closes that
-   gap. Needs its own short design pass (distinguishing "newly announced" from "went
-   active," plus day-over-day diffing the ADXO service doesn't currently do).
-4. **Firmware** -- once hardware arrives and the schema/preview above are further
-   along.
+1. **Live-verify** the HamAlert-page beam heading panel and the `/preview` page in a
+   browser -- both are already built and tested, just need eyes-on confirmation.
+2. **Spotter-Continent filter for the Trigger Builder** -- real evidence (a single
+   popular DXpedition callsign hit HamAlert's 10,000-spots/day ceiling on its own)
+   showed this is needed even for single-callsign triggers, not just broad
+   multi-entity ones.
+3. **The Needed-entity feature itself** -- still entirely unbuilt; only the ranking
+   design exists so far.
+4. **Alert when a needed (never-confirmed) DXCC entity appears on ADXO** -- currently
+   you'd only notice by checking the Needed tab; needs its own short design pass
+   (distinguishing "newly announced" from "went active," plus day-over-day diffing
+   the ADXO service doesn't currently do).
+5. **Firmware** -- once hardware arrives.
 
 ## Credit
 
