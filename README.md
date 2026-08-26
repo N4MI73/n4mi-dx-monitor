@@ -10,10 +10,12 @@ operational question at a glance:
 - **[APRSMon](https://github.com/N4MI73/n4mi-aprs-monitor)** -- "What's happening around me?" (local weather + APRS activity)
 - **DXMon** (this repo) -- "Is a DX station I care about active right now, and where should I listen?"
 
-> **Status: actively developed, not yet operational.** DXMon's backend -- ADXO
-> ingestion, a web curation UI, a real-time HamAlert listener, a Trigger Builder,
-> beam heading, and an in-browser virtual device preview -- is fully built and
-> confirmed against live data. The device firmware doesn't exist yet -- see
+> **Status: backend feature-complete, hardware in hand, firmware not yet started.**
+> DXMon's backend -- ADXO ingestion, a web curation UI, a real-time HamAlert
+> listener, a Trigger Builder, beam heading, a Wanted list, and an in-browser
+> virtual device preview -- is fully built and confirmed against live data,
+> including real HamAlert triggers created directly from the tool. The Waveshare
+> display board has been delivered -- firmware bring-up is next. See
 > [Current Status](#current-status) below.
 
 ## What DXMon does (planned)
@@ -23,6 +25,9 @@ operational question at a glance:
   spots -- any operating notes like split/offset info, e.g. "up 2.4").
 - **Needed:** surface DXCC entities you've never confirmed, ranked by rarity and
   cross-referenced against currently-active/upcoming DXpeditions.
+- **Wanted:** a small, manually-curated list of specific band/mode gaps on entities
+  you've already confirmed -- distinct from Needed, which tracks whole never-confirmed
+  entities. Always expected to be a short list.
 - **Overview:** an at-a-glance summary of both, on the device screen.
 - **Trigger Builder:** generates ready-to-paste HamAlert trigger recipes for any
   callsign or DXCC entity -- HamAlert has no API for creating triggers automatically,
@@ -81,12 +86,13 @@ n4mi-dx-monitor/
 | ADXO ingestion service | Built, deployed, confirmed working against live data |
 | Web curation UI (browse ADXO, manage watchlist) | Built, deployed, confirmed working -- including persistence across a container restart |
 | HamAlert Telnet listener (real-time spot matching) | Built, deployed, confirmed working against live spots, including an enable/disable toggle for extended absences from the shack |
-| Trigger Builder (generates ready-to-paste HamAlert trigger recipes) | Built, deployed, confirmed working |
+| Trigger Builder (generates ready-to-paste HamAlert trigger recipes) | Built, deployed, **confirmed working with real HamAlert triggers created via the tool** |
 | Merged watched-status JSON (`/api/dxmon/watched`) | Built, deployed, confirmed working -- joins watchlist + ADXO status + latest HamAlert spot + beam heading per entry |
-| Beam heading (great-circle bearing/distance to any watched callsign) | Built, tested, **confirmed live via screenshot** |
-| Virtual device preview (`/preview`, in-browser, for testing before firmware) | Built and tested; live visual confirmation pending |
+| Beam heading (great-circle bearing/distance to any watched callsign) | Built, tested, confirmed live via screenshot |
+| Virtual device preview (`/preview`, in-browser, for testing before firmware) | Built, tested, confirmed live via screenshot |
+| Wanted (small, manually-curated band/mode gaps on confirmed entities) | Built, tested, **confirmed live with real HamAlert triggers** |
 | Needed-entity feature | Not yet built |
-| Firmware | Not started -- hardware (Waveshare ESP32-S3-Touch-LCD-4.3B) has reached the US, expected soon |
+| Firmware | Not started -- **hardware (Waveshare ESP32-S3-Touch-LCD-4.3B) delivered 2026-08-26** |
 
 This project follows the series' established practice: design before code, real-data
 testing before deployment, hardware confirmation before any firmware commit. Nothing
@@ -94,19 +100,23 @@ here should be assumed device-ready until the firmware section above says so.
 
 ## Planned next
 
-1. **Live-verify** the HamAlert-page beam heading panel and the `/preview` page in a
-   browser -- both are already built and tested, just need eyes-on confirmation.
+1. **Firmware bring-up** -- hardware is now in hand. First real step is Phase-1
+   equivalent work: confirm the board boots, get a first successful PlatformIO
+   build, and research/confirm the specific LVGL/display-driver toolchain for this
+   board (not yet done -- this board's exact driver/touch-controller combination
+   hasn't been verified against real hardware yet).
 2. **Spotter-Continent filter for the Trigger Builder** -- real evidence (a single
    popular DXpedition callsign hit HamAlert's 10,000-spots/day ceiling on its own)
    showed this is needed even for single-callsign triggers, not just broad
    multi-entity ones.
 3. **The Needed-entity feature itself** -- still entirely unbuilt; only the ranking
    design exists so far.
-4. **Alert when a needed (never-confirmed) DXCC entity appears on ADXO** -- currently
+4. **Wanted's device-side/Overview placement** -- currently web-only; the plan is to
+   share the Needed panel space, visually distinguished, once Needed itself exists.
+5. **Alert when a needed (never-confirmed) DXCC entity appears on ADXO** -- currently
    you'd only notice by checking the Needed tab; needs its own short design pass
    (distinguishing "newly announced" from "went active," plus day-over-day diffing
    the ADXO service doesn't currently do).
-5. **Firmware** -- once hardware arrives.
 
 ## Credit
 
