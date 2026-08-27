@@ -92,7 +92,7 @@ n4mi-dx-monitor/
 | Virtual device preview (`/preview`, in-browser, for testing before firmware) | Built, tested, confirmed live via screenshot |
 | Wanted (small, manually-curated band/mode gaps on confirmed entities) | Built, tested, **confirmed live with real HamAlert triggers** |
 | Needed-entity feature | Not yet built |
-| Firmware | Not started -- **hardware (Waveshare ESP32-S3-Touch-LCD-4.3B) delivered 2026-08-26** |
+| Firmware | **Arduino IDE reference stage confirmed working on real hardware 2026-08-27** (display, touch, full LVGL v8 stack) -- PlatformIO port in progress |
 
 This project follows the series' established practice: design before code, real-data
 testing before deployment, hardware confirmation before any firmware commit. Nothing
@@ -100,11 +100,11 @@ here should be assumed device-ready until the firmware section above says so.
 
 ## Planned next
 
-1. **Firmware bring-up** -- hardware is now in hand. First real step is Phase-1
-   equivalent work: confirm the board boots, get a first successful PlatformIO
-   build, and research/confirm the specific LVGL/display-driver toolchain for this
-   board (not yet done -- this board's exact driver/touch-controller combination
-   hasn't been verified against real hardware yet).
+1. **PlatformIO port** -- the Arduino IDE reference stage is fully confirmed working
+   on real hardware (display, touch, LVGL v8 all proven). Next: port that
+   known-good config into a PlatformIO project. Open question: which `pioarduino`
+   platform version to pin, since none cleanly match the exact Arduino core
+   version (3.0.7) just proven working.
 2. **Spotter-Continent filter for the Trigger Builder** -- real evidence (a single
    popular DXpedition callsign hit HamAlert's 10,000-spots/day ceiling on its own)
    showed this is needed even for single-callsign triggers, not just broad
