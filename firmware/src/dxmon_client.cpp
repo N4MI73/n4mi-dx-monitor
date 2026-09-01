@@ -18,6 +18,45 @@ static void copy_field(char *dest, size_t dest_size, JsonVariant v)
     dest[dest_size - 1] = '\0';
 }
 
+bool dxmon_fetch_preview_status(PreviewStatus &out)
+{
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("dxmon_fetch_preview_status: Wi-Fi not connected");
+        return false;
+    }
+
+    HTTPClient http;
+    String url = String("http://") + DXMON_SERVER_HOST + ":" + DXMON_SERVER_PORT + DXMON_PREVIEW_STATUS_PATH;
+    http.begin(url);
+    int code = http.GET();
+    if (code != HTTP_CODE_OK) {
+        Serial.printf("dxmon_fetch_preview_status: HTTP GET failed, code %d\n", code);
+        http.end();
+        return false;
+    }
+
+    String payload = http.getString();
+    http.end();
+
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, payload);
+    if (err) {
+        Serial.printf("dxmon_fetch_preview_status: JSON parse failed: %s\n", err.c_str());
+        return false;
+    }
+
+    PreviewStatus temp;
+    temp.adxo_entry_count = doc["adxo"]["entry_count"] | 0;
+    copy_field(temp.adxo_updated, sizeof(temp.adxo_updated), doc["adxo"]["updated"]);
+    temp.hamalert_connected = doc["hamalert"]["connected"] | false;
+    temp.hamalert_enabled = doc["hamalert"]["enabled"] | false;
+    temp.hamalert_logged_in = doc["hamalert"]["logged_in"] | false;
+    temp.watched_count = doc["watched_count"] | 0;
+
+    out = temp;
+    return true;
+}
+
 bool dxmon_fetch_watched(WatchedData &out)
 {
     if (WiFi.status() != WL_CONNECTED) {
@@ -75,12 +114,14 @@ bool dxmon_fetch_watched(WatchedData &out)
             we.mode[0] = '\0';
             we.frequency[0] = '\0';
             we.received_at[0] = '\0';
+            we.comment[0] = '\0';
         } else {
             we.has_last_spot = true;
             copy_field(we.band, sizeof(we.band), last_spot["band"]);
             copy_field(we.mode, sizeof(we.mode), last_spot["mode"]);
             copy_field(we.frequency, sizeof(we.frequency), last_spot["frequency"]);
             copy_field(we.received_at, sizeof(we.received_at), last_spot["received_at"]);
+            copy_field(we.comment, sizeof(we.comment), last_spot["comment"]);
         }
 
         temp.count++;

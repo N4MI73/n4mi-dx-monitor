@@ -1,17 +1,13 @@
 /**
- * N4MI DXMon -- real firmware UI with live data.
+ * N4MI DXMon -- real firmware UI with live data + real Config screen.
  *
- * Build order (2026-08-29 session):
- *   1. Four-tab navigation shell -- confirmed working on real hardware.
- *   2. Overview's real content against mock data -- confirmed working,
- *      including a real clipping-bug fix (ACTIVE status indicator).
- *   3. This step: real Wi-Fi + live fetch from /api/dxmon/watched,
- *      replacing Overview's mock WATCHED content with real data, and
- *      switching the NEEDED panel to an honest placeholder (no backend
- *      exists for it yet -- showing static mock DX data next to genuinely
- *      live data would be misleading).
+ * Build order:
+ *   1-3. Four-tab shell, live Overview data fetch -- confirmed 2026-08-29.
+ *   4. This step (2026-09-01): real Config screen (Wi-Fi/ADXO/HamAlert
+ *      status, watched count, curate-at URL, firmware version, Force
+ *      Refresh), plus a small Wi-Fi glyph on Overview.
  *
- * Watched/Needed/Config tabs remain honest "Not yet built" placeholders.
+ * Watched/Needed tabs remain honest "Not yet built" placeholders.
  */
 
 #include <Arduino.h>
@@ -49,16 +45,13 @@ using namespace esp_panel::board;
 #define COLOR_BADGE_TEXT    lv_color_hex(0x8a94a6)
 
 // ---------------------------------------------------------------------------
-// Small date/time formatting helpers -- deliberately lightweight.
-// Real "elapsed time" math (NTP sync + full ISO parsing + day-count
-// arithmetic) is scoped OUT of this pass -- see session notes. These just
-// reformat the raw ISO strings the server already sends into something more
-// readable, with no relative-time computation.
+// Lightweight date/time formatting -- see 2026-08-29 session notes: real
+// elapsed-time math (NTP sync + full ISO parsing + day-count arithmetic) is
+// deliberately out of scope. These just reformat raw ISO strings.
 // ---------------------------------------------------------------------------
 static const char *MONTH_ABBR[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
-// "2026-08-29" or "2026-08-29T11:10:00..." -> "Aug 29"
 static void format_short_date(const char *iso, char *out, size_t out_size)
 {
     if (!iso || strlen(iso) < 10) {
@@ -74,7 +67,6 @@ static void format_short_date(const char *iso, char *out, size_t out_size)
     snprintf(out, out_size, "%s %d", MONTH_ABBR[month - 1], day);
 }
 
-// "2026-08-25T11:10:00.127182-04:00" -> "Aug 25, 11:10"
 static void format_short_datetime(const char *iso, char *out, size_t out_size)
 {
     if (!iso || strlen(iso) < 16) {
@@ -99,8 +91,10 @@ static void to_upper_inplace(char *s)
 
 // ---------------------------------------------------------------------------
 // Shared header -- title (left) + status text (right), matches every mockup.
+// Returns the status label so callers needing extra header content (the
+// Overview Wi-Fi glyph) can position relative to it robustly.
 // ---------------------------------------------------------------------------
-static void create_header(lv_obj_t *parent, const char *title, const char *status)
+static lv_obj_t *create_header(lv_obj_t *parent, const char *title, const char *status)
 {
     lv_obj_t *bar = lv_obj_create(parent);
     lv_obj_remove_style_all(bar);
@@ -129,6 +123,8 @@ static void create_header(lv_obj_t *parent, const char *title, const char *statu
     lv_obj_align(divider, LV_ALIGN_TOP_MID, 0, 56);
     lv_obj_set_style_bg_color(divider, COLOR_DIVIDER, 0);
     lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, 0);
+
+    return status_lbl;
 }
 
 static lv_obj_t *make_screen(void)
@@ -181,12 +177,8 @@ static lv_obj_t *make_divider(lv_obj_t *parent, int x, int y, int w)
 }
 
 /**
- * Right-aligned status dot + label. Right-aligns the label first, then
- * measures its real rendered width via lv_obj_update_layout() before placing
- * the dot -- fixes a real clipping bug found on real hardware 2026-08-29,
- * where a fixed pixel x position for the label didn't leave enough margin
- * for "ACTIVE"'s actual text width before the panel's right edge clipped it.
- * Returns the label object so callers can update its text/color live.
+ * Right-aligned dot + label, robust to text-length changes -- fixes a real
+ * clipping bug found on real hardware 2026-08-29 (see session notes).
  */
 static lv_obj_t *make_status_indicator(lv_obj_t *parent, lv_obj_t **out_dot, lv_color_t dot_color,
                                         const char *text, lv_color_t text_color, int right_inset, int y)
@@ -212,11 +204,6 @@ static lv_obj_t *make_status_indicator(lv_obj_t *parent, lv_obj_t **out_dot, lv_
     return lbl;
 }
 
-/**
- * Re-runs make_status_indicator's positioning math against an existing
- * label whose text just changed -- lets the dot stay correctly placed next
- * to text of a different length on a live update, not just at creation.
- */
 static void reposition_status_indicator(lv_obj_t *lbl, lv_obj_t *dot)
 {
     lv_obj_update_layout(lbl);
@@ -244,11 +231,12 @@ static lv_obj_t *make_pill_badge(lv_obj_t *parent, const char *text, int x, int 
 
 // ---------------------------------------------------------------------------
 // Overview -- WATCHED panel is real and live; NEEDED panel is an honest
-// placeholder (no backend exists for it yet). Widget pointers are kept so
-// a later fetch can update WATCHED's content in place, without tearing down
-// and rebuilding the whole screen.
+// placeholder (no backend exists for it yet). A small Wi-Fi glyph sits in
+// the header, left of the "LIVE" status text.
 // ---------------------------------------------------------------------------
 struct OverviewWidgets {
+    lv_obj_t *wifi_glyph;
+    lv_obj_t *status_text;   // header's own status label, needed to position the glyph
     lv_obj_t *watched_status_lbl;
     lv_obj_t *watched_status_dot;
     lv_obj_t *watched_callsign;
@@ -257,6 +245,7 @@ struct OverviewWidgets {
     lv_obj_t *watched_mode_badge;
     lv_obj_t *watched_mode_lbl;
     lv_obj_t *watched_last_spot;
+    lv_obj_t *watched_comment;
     lv_obj_t *watched_active_through;
     lv_obj_t *watched_badge;
     lv_obj_t *watched_badge_lbl;
@@ -266,7 +255,18 @@ static OverviewWidgets ov;
 static lv_obj_t *make_screen_overview(void)
 {
     lv_obj_t *scr = make_screen();
-    create_header(scr, "DXMON", "LIVE");
+    ov.status_text = create_header(scr, "DXMON", "LIVE");
+
+    // Wi-Fi glyph, positioned left of the "LIVE" text using the same
+    // measure-after-align technique as make_status_indicator, so it stays
+    // correctly placed regardless of status text length.
+    lv_obj_update_layout(ov.status_text);
+    int status_x = lv_obj_get_x(ov.status_text);
+    ov.wifi_glyph = lv_label_create(scr);
+    lv_label_set_text(ov.wifi_glyph, LV_SYMBOL_WIFI);
+    lv_obj_set_style_text_font(ov.wifi_glyph, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(ov.wifi_glyph, COLOR_DOT_GRAY, 0);
+    lv_obj_set_pos(ov.wifi_glyph, status_x - 26, 20);
 
     // --- WATCHED panel (left) -- built with honest "not yet fetched" state ---
     lv_obj_t *watched = make_panel(scr, 16, 72, 378, 316);
@@ -305,10 +305,25 @@ static lv_obj_t *make_screen_overview(void)
 
     make_divider(watched, 20, 212, 338);
 
-    make_label(watched, "ACTIVE THROUGH", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 20, 230);
-    ov.watched_active_through = make_label(watched, "--", &lv_font_montserrat_16, COLOR_TEXT_SECOND, 20, 252);
+    // Comment row -- new 2026-09-01. Fixed width + LV_LABEL_LONG_DOT truncation, unlike
+    // some earlier labels, since operator comments can genuinely run long (real examples
+    // seen: "FN41<F2>LR90 FT8  Sent: -11  R", "good sig into en80, multi stre") and this
+    // avoids repeating the fixed-x-position clipping bug found 2026-08-29.
+    make_label(watched, "COMMENT", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 20, 230);
+    ov.watched_comment = lv_label_create(watched);
+    lv_label_set_text(ov.watched_comment, "");
+    lv_obj_set_style_text_font(ov.watched_comment, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(ov.watched_comment, COLOR_TEXT_SECOND, 0);
+    lv_label_set_long_mode(ov.watched_comment, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(ov.watched_comment, 338);
+    lv_obj_set_pos(ov.watched_comment, 20, 248);
 
-    ov.watched_badge = make_pill_badge(watched, "", 20, 280);
+    make_divider(watched, 20, 278, 338);
+
+    make_label(watched, "ACTIVE THROUGH", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 20, 296);
+    ov.watched_active_through = make_label(watched, "--", &lv_font_montserrat_16, COLOR_TEXT_SECOND, 20, 318);
+
+    ov.watched_badge = make_pill_badge(watched, "", 20, 346);
     ov.watched_badge_lbl = lv_obj_get_child(ov.watched_badge, 0);
     lv_obj_add_flag(ov.watched_badge, LV_OBJ_FLAG_HIDDEN);
 
@@ -324,13 +339,6 @@ static lv_obj_t *make_screen_overview(void)
     return scr;
 }
 
-/**
- * Selects which watched entry to feature: prefers an entry with a real
- * last_spot (genuinely on the air right now), tie-broken by most recent
- * received_at -- ISO 8601 timestamps sort correctly as plain strings, so
- * strcmp() alone is enough, no date parsing needed for this comparison.
- * Falls back to the first entry if none have been spotted yet.
- */
 static int select_featured_entry(const WatchedData &data)
 {
     if (data.count == 0) return -1;
@@ -354,6 +362,7 @@ static void update_overview_watched(const WatchedData &data)
         lv_label_set_text(ov.watched_freq, "--");
         lv_label_set_text(ov.watched_mode_lbl, "--");
         lv_label_set_text(ov.watched_last_spot, "--");
+        lv_label_set_text(ov.watched_comment, "");
         lv_label_set_text(ov.watched_active_through, "--");
         lv_obj_add_flag(ov.watched_badge, LV_OBJ_FLAG_HIDDEN);
         reposition_status_indicator(ov.watched_status_lbl, ov.watched_status_dot);
@@ -395,10 +404,19 @@ static void update_overview_watched(const WatchedData &data)
         char when_buf[24];
         format_short_datetime(e.received_at, when_buf, sizeof(when_buf));
         lv_label_set_text(ov.watched_last_spot, when_buf);
+
+        if (e.comment[0] != '\0') {
+            char comment_buf[80];
+            snprintf(comment_buf, sizeof(comment_buf), "\xE2\x80\x9C%s\xE2\x80\x9D", e.comment);
+            lv_label_set_text(ov.watched_comment, comment_buf);
+        } else {
+            lv_label_set_text(ov.watched_comment, "");
+        }
     } else {
         lv_label_set_text(ov.watched_freq, "--");
         lv_label_set_text(ov.watched_mode_lbl, "--");
         lv_label_set_text(ov.watched_last_spot, "Not yet spotted");
+        lv_label_set_text(ov.watched_comment, "");
     }
 
     char through_buf[24];
@@ -416,8 +434,169 @@ static void update_overview_watched(const WatchedData &data)
     }
 }
 
+/** Wi-Fi glyph reflects real-time WiFi.status() -- no server round-trip needed. */
+static void update_wifi_glyph(void)
+{
+    bool connected = (WiFi.status() == WL_CONNECTED);
+    lv_obj_set_style_text_color(ov.wifi_glyph, connected ? COLOR_STATUS_GREEN : COLOR_DOT_GRAY, 0);
+}
+
 // ---------------------------------------------------------------------------
-// Honest placeholders -- Watched/Needed/Config tabs not yet built.
+// Config -- real status panel (Wi-Fi, ADXO poll, HamAlert Telnet, watched
+// count, curate-at URL, firmware version) + Force Refresh. Wi-Fi Setup is a
+// visible but disabled placeholder -- a real captive-portal reconfiguration
+// flow is out of scope for this pass (see session notes: both PropMon and
+// APRSMon needed multiple dedicated sessions to build that feature safely).
+// ---------------------------------------------------------------------------
+struct ConfigWidgets {
+    lv_obj_t *wifi_lbl;
+    lv_obj_t *wifi_dot;
+    lv_obj_t *adxo_lbl;
+    lv_obj_t *adxo_dot;
+    lv_obj_t *hamalert_lbl;
+    lv_obj_t *hamalert_dot;
+    lv_obj_t *watchlist_lbl;
+};
+static ConfigWidgets cfgw;
+static volatile bool force_refresh_requested = false;
+
+static void force_refresh_btn_cb(lv_event_t *e)
+{
+    force_refresh_requested = true;
+}
+
+static lv_obj_t *make_config_row(lv_obj_t *parent, lv_obj_t **out_dot, const char *label,
+                                  const char *initial_value, lv_color_t value_color, int y)
+{
+    make_label(parent, label, &lv_font_montserrat_16, COLOR_TEXT_SECOND, 40, y);
+    lv_obj_t *dot = lv_obj_create(parent);
+    lv_obj_remove_style_all(dot);
+    lv_obj_set_size(dot, 10, 10);
+    lv_obj_set_style_radius(dot, 5, 0);
+    lv_obj_set_style_bg_color(dot, COLOR_DOT_GRAY, 0);
+    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+    lv_obj_set_pos(dot, 20, y + 4);
+    if (out_dot) *out_dot = dot;
+
+    lv_obj_t *val = lv_label_create(parent);
+    lv_label_set_text(val, initial_value);
+    lv_obj_set_style_text_font(val, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(val, value_color, 0);
+    lv_obj_align(val, LV_ALIGN_TOP_RIGHT, -24, y - 4);
+    return val;
+}
+
+static lv_obj_t *make_screen_config(void)
+{
+    lv_obj_t *scr = make_screen();
+    create_header(scr, "CONFIG", "v0.1-dev");
+
+    lv_obj_t *panel = make_panel(scr, 16, 72, 768, 240);
+
+    cfgw.wifi_lbl = make_config_row(panel, &cfgw.wifi_dot, "Wi-Fi", "Connecting...", COLOR_TEXT_MUTED, 30);
+    make_divider(panel, 20, 50, 728);
+
+    cfgw.adxo_lbl = make_config_row(panel, &cfgw.adxo_dot, "ADXO Poll", "--", COLOR_TEXT_MUTED, 70);
+    make_divider(panel, 20, 90, 728);
+
+    cfgw.hamalert_lbl = make_config_row(panel, &cfgw.hamalert_dot, "HamAlert Telnet", "--", COLOR_TEXT_MUTED, 110);
+    make_divider(panel, 20, 130, 728);
+
+    cfgw.watchlist_lbl = make_config_row(panel, nullptr, "Watchlist", "--", COLOR_TEXT_PRIMARY, 150);
+    make_divider(panel, 20, 170, 728);
+
+    char curate_buf[48];
+    snprintf(curate_buf, sizeof(curate_buf), "http://%s:%d", DXMON_SERVER_HOST, DXMON_SERVER_PORT);
+    make_config_row(panel, nullptr, "Curate at", curate_buf, COLOR_BADGE_BLUE_TX, 190);
+    make_divider(panel, 20, 210, 728);
+
+    make_config_row(panel, nullptr, "Firmware", "v0.1-dev", COLOR_TEXT_PRIMARY, 227);
+
+    // Force Refresh -- real, functional.
+    lv_obj_t *refresh_btn = lv_btn_create(scr);
+    lv_obj_set_size(refresh_btn, 368, 66);
+    lv_obj_set_pos(refresh_btn, 16, 330);
+    lv_obj_set_style_bg_color(refresh_btn, COLOR_BADGE_BLUE_BG, 0);
+    lv_obj_set_style_border_color(refresh_btn, COLOR_ACCENT_BLUE, 0);
+    lv_obj_set_style_border_width(refresh_btn, 2, 0);
+    lv_obj_set_style_radius(refresh_btn, 10, 0);
+    lv_obj_add_event_cb(refresh_btn, force_refresh_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *refresh_lbl = lv_label_create(refresh_btn);
+    lv_label_set_text(refresh_lbl, "Force Refresh");
+    lv_obj_set_style_text_font(refresh_lbl, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(refresh_lbl, COLOR_BADGE_BLUE_TX, 0);
+    lv_obj_center(refresh_lbl);
+
+    // Wi-Fi Setup -- visible, deliberately disabled placeholder (see comment
+    // above the struct). Muted styling distinguishes it from the real button.
+    lv_obj_t *setup_btn = lv_obj_create(scr);
+    lv_obj_remove_style_all(setup_btn);
+    lv_obj_set_size(setup_btn, 368, 66);
+    lv_obj_set_pos(setup_btn, 408, 330);
+    lv_obj_set_style_bg_color(setup_btn, COLOR_PANEL_BG, 0);
+    lv_obj_set_style_bg_opa(setup_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(setup_btn, COLOR_PANEL_BORDER, 0);
+    lv_obj_set_style_border_width(setup_btn, 2, 0);
+    lv_obj_set_style_radius(setup_btn, 10, 0);
+    lv_obj_t *setup_lbl = lv_label_create(setup_btn);
+    lv_label_set_text(setup_lbl, "Wi-Fi Setup (coming soon)");
+    lv_obj_set_style_text_font(setup_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(setup_lbl, COLOR_TEXT_MUTED, 0);
+    lv_obj_center(setup_lbl);
+
+    return scr;
+}
+
+/** Updates Wi-Fi row from real-time WiFi.status()/localIP() -- no fetch needed. */
+static void update_config_wifi(void)
+{
+    if (WiFi.status() == WL_CONNECTED) {
+        char buf[48];
+        IPAddress ip = WiFi.localIP();
+        snprintf(buf, sizeof(buf), "Connected %s %d.%d.%d.%d", "\xE2\x80\xA2", ip[0], ip[1], ip[2], ip[3]);
+        lv_label_set_text(cfgw.wifi_lbl, buf);
+        lv_obj_set_style_text_color(cfgw.wifi_lbl, COLOR_TEXT_PRIMARY, 0);
+        lv_obj_set_style_bg_color(cfgw.wifi_dot, COLOR_STATUS_GREEN, 0);
+    } else {
+        lv_label_set_text(cfgw.wifi_lbl, "Disconnected");
+        lv_obj_set_style_text_color(cfgw.wifi_lbl, COLOR_TEXT_MUTED, 0);
+        lv_obj_set_style_bg_color(cfgw.wifi_dot, COLOR_DOT_GRAY, 0);
+    }
+}
+
+static void update_config_preview_status(const PreviewStatus &ps)
+{
+    char adxo_buf[48];
+    char when_buf[24];
+    format_short_datetime(ps.adxo_updated, when_buf, sizeof(when_buf));
+    snprintf(adxo_buf, sizeof(adxo_buf), "OK %s %s", "\xE2\x80\xA2", when_buf);
+    lv_label_set_text(cfgw.adxo_lbl, adxo_buf);
+    lv_obj_set_style_text_color(cfgw.adxo_lbl, COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_bg_color(cfgw.adxo_dot, COLOR_STATUS_GREEN, 0);
+
+    // HamAlert -- no last-spot timestamp at this endpoint (see struct comment
+    // in dxmon_client.h); shows connection state only.
+    if (!ps.hamalert_enabled) {
+        lv_label_set_text(cfgw.hamalert_lbl, "Disabled");
+        lv_obj_set_style_text_color(cfgw.hamalert_lbl, COLOR_TEXT_MUTED, 0);
+        lv_obj_set_style_bg_color(cfgw.hamalert_dot, COLOR_DOT_GRAY, 0);
+    } else if (ps.hamalert_connected && ps.hamalert_logged_in) {
+        lv_label_set_text(cfgw.hamalert_lbl, "Connected");
+        lv_obj_set_style_text_color(cfgw.hamalert_lbl, COLOR_TEXT_PRIMARY, 0);
+        lv_obj_set_style_bg_color(cfgw.hamalert_dot, COLOR_STATUS_GREEN, 0);
+    } else {
+        lv_label_set_text(cfgw.hamalert_lbl, "Disconnected");
+        lv_obj_set_style_text_color(cfgw.hamalert_lbl, COLOR_TEXT_MUTED, 0);
+        lv_obj_set_style_bg_color(cfgw.hamalert_dot, COLOR_DOT_GRAY, 0);
+    }
+
+    char watch_buf[24];
+    snprintf(watch_buf, sizeof(watch_buf), "%d watched", ps.watched_count);
+    lv_label_set_text(cfgw.watchlist_lbl, watch_buf);
+}
+
+// ---------------------------------------------------------------------------
+// Honest placeholders -- Watched/Needed tabs not yet built.
 // ---------------------------------------------------------------------------
 static lv_obj_t *make_screen_placeholder(const char *title, const char *status)
 {
@@ -487,6 +666,29 @@ static void create_tab_bar(lv_obj_t *parent, int active_index)
 // ---------------------------------------------------------------------------
 static uint32_t last_fetch_ms = 0;
 
+static void do_full_refresh(void)
+{
+    WatchedData data;
+    if (dxmon_fetch_watched(data)) {
+        Serial.printf("Watched refresh OK, %d entr%s\n", data.count, data.count == 1 ? "y" : "ies");
+        lvgl_port_lock(-1);
+        update_overview_watched(data);
+        lvgl_port_unlock();
+    } else {
+        Serial.println("Watched refresh failed -- keeping last known-good data");
+    }
+
+    PreviewStatus ps;
+    if (dxmon_fetch_preview_status(ps)) {
+        Serial.println("Preview status refresh OK");
+        lvgl_port_lock(-1);
+        update_config_preview_status(ps);
+        lvgl_port_unlock();
+    } else {
+        Serial.println("Preview status refresh failed -- keeping last known-good data");
+    }
+}
+
 void setup()
 {
     Serial.begin(115200);
@@ -516,29 +718,28 @@ void setup()
     screens[0] = make_screen_overview();
     screens[1] = make_screen_placeholder("WATCHED", "0 TRACKED");
     screens[2] = make_screen_placeholder("NEEDED", "0 REMAINING");
-    screens[3] = make_screen_placeholder("CONFIG", "v0.1-dev");
+    screens[3] = make_screen_config();
 
     for (int i = 0; i < 4; i++) {
         create_tab_bar(screens[i], i);
     }
 
     lv_scr_load(screens[0]);
+    update_wifi_glyph();
+    update_config_wifi();
 
     lvgl_port_unlock();
 
     Serial.println("Connecting Wi-Fi");
     bool wifi_ok = wifi_connect(WIFI_CONNECT_TIMEOUT_MS);
 
+    lvgl_port_lock(-1);
+    update_wifi_glyph();
+    update_config_wifi();
+    lvgl_port_unlock();
+
     if (wifi_ok) {
-        WatchedData data;
-        if (dxmon_fetch_watched(data)) {
-            Serial.printf("Initial fetch OK, %d watched entr%s\n", data.count, data.count == 1 ? "y" : "ies");
-            lvgl_port_lock(-1);
-            update_overview_watched(data);
-            lvgl_port_unlock();
-        } else {
-            Serial.println("Initial fetch failed -- leaving 'connecting' placeholder state");
-        }
+        do_full_refresh();
     } else {
         lvgl_port_lock(-1);
         lv_label_set_text(ov.watched_status_lbl, "NO WI-FI");
@@ -552,17 +753,22 @@ void setup()
 
 void loop()
 {
-    if (WiFi.status() == WL_CONNECTED && millis() - last_fetch_ms >= LIVE_FETCH_INTERVAL_MS) {
-        WatchedData data;
-        if (dxmon_fetch_watched(data)) {
-            Serial.printf("Refresh OK, %d watched entr%s\n", data.count, data.count == 1 ? "y" : "ies");
-            lvgl_port_lock(-1);
-            update_overview_watched(data);
-            lvgl_port_unlock();
+    bool time_for_refresh = (WiFi.status() == WL_CONNECTED && millis() - last_fetch_ms >= LIVE_FETCH_INTERVAL_MS);
+
+    if (force_refresh_requested || time_for_refresh) {
+        force_refresh_requested = false;
+        if (WiFi.status() == WL_CONNECTED) {
+            do_full_refresh();
         } else {
-            Serial.println("Refresh fetch failed -- keeping last known-good data on screen");
+            Serial.println("Refresh requested but Wi-Fi not connected");
         }
         last_fetch_ms = millis();
     }
+
+    lvgl_port_lock(-1);
+    update_wifi_glyph();
+    update_config_wifi();
+    lvgl_port_unlock();
+
     delay(200);
 }

@@ -4,6 +4,7 @@
 #define DXMON_SERVER_HOST   "192.168.6.29"
 #define DXMON_SERVER_PORT   8083
 #define DXMON_WATCHED_PATH  "/api/dxmon/watched"
+#define DXMON_PREVIEW_STATUS_PATH  "/api/preview/status"
 
 #define WIFI_CONNECT_TIMEOUT_MS  15000
 #define LIVE_FETCH_INTERVAL_MS   60000

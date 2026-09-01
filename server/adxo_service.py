@@ -988,6 +988,193 @@ def api_dxmon_watched():
         "watched": _build_dxmon_watched(),
     })
 
+# =========================================================================================
+# Needed / Wanted -- real-time spot cross-referencing, added 2026-09-01
+#
+# Real design basis (session discussion 2026-09-01):
+#   - Watched vs. (Needed+Wanted) is the real conceptual split -- both Needed and Wanted
+#     answer "DX I still need, ranked by how close I am," just from different sources
+#     (a whole missing entity vs. a specific missing band/mode slot on a confirmed one).
+#   - Matching is by ENTITY NAME, not DXCC number -- confirmed as the existing codebase's
+#     own convention throughout (Watched's "dxcc" field holds a name string; the Trigger
+#     Builder explicitly tells Dan to "Select each entity BY NAME... not by prefix"; ADXO
+#     entries' own "dxcc" field is a name string too). HamAlert's real spot payload already
+#     carries a resolved "entity" name string on every spot regardless of source (cluster/
+#     pskreporter/rbn) or trigger type (callsign/DXCC/band/mode) -- confirmed live 2026-09-01
+#     against real firing triggers (9V1SH/9V1ZV -> "Singapore", 9S1P -> "Democratic Republic
+#     of the Congo"). No pyhamtools lookup needed for this -- that stays beam-heading-only.
+#   - "triggerComment" on each spot echoes the firing trigger's real Comment text, but is
+#     deliberately NOT used for matching -- free-text comments could drift out of sync with
+#     the real watched/needed/wanted lists over time. Structured fields (entity/band/mode)
+#     are the source of truth; triggerComment is display-only if ever surfaced.
+#   - Known real risk, not fully mitigated: entity-name matching requires no_confirms.csv's
+#     "Entity" column to string-match HamAlert's own resolved entity names for the same real
+#     place. Normalized (lowercased, stripped) comparison is used to reduce but not eliminate
+#     this risk. If a Needed entity never seems to match despite a real spot existing, check
+#     for a naming mismatch between the CSV and HamAlert's own DXCC picker first.
+#   - Club Log Most Wanted List ranking (for Needed entities with no ADXO link and no live
+#     spot) is NOT implemented here -- the original ranking design called for it, but no
+#     Club Log integration exists anywhere in this codebase yet. Real, separate task,
+#     flagged rather than faked. Entities without a live spot or ADXO link fall back to
+#     no_confirms.csv's own file order for now.
+# =========================================================================================
+
+def _normalize_entity_name(name):
+    return (name or "").strip().lower()
+
+
+def _find_last_spot_for_entity(entity_name, recent_spots, band=None, mode=None):
+    """Same shape/purpose as _find_last_spot_for_callsign, but matches by entity name
+    instead of callsign -- the right join key for Needed (any band/mode) and Wanted
+    (a specific band/mode) since neither is tied to one advance-known callsign.
+
+    band/mode, if given, are additional required-match filters (Wanted's own scoping --
+    Needed passes both as None, matching "any band/mode" per its own definition).
+    Band comparison is normalized lowercase (spot bands are already lowercase, e.g. "15m",
+    but defensive here); mode comparison likewise (spot modes are lowercase, e.g. "ft8")."""
+    target = _normalize_entity_name(entity_name)
+    if not target:
+        return None
+    band_filter = (band or "").strip().lower() or None
+    mode_filter = (mode or "").strip().lower() or None
+
+    for entry in recent_spots:
+        spot = entry.get("spot", {})
+        if _normalize_entity_name(spot.get("entity")) != target:
+            continue
+        if band_filter and (spot.get("band") or "").strip().lower() != band_filter:
+            continue
+        if mode_filter and (spot.get("mode") or "").strip().lower() != mode_filter:
+            continue
+        return {
+            "callsign": spot.get("callsign"),
+            "band": spot.get("band"),
+            "mode": spot.get("mode"),
+            "frequency": spot.get("frequency"),
+            "received_at": entry.get("received_at"),
+            "source": spot.get("source"),
+            "comment": spot.get("comment"),
+            "raw_text": spot.get("rawText"),
+            "spotter": spot.get("spotter"),
+            "spotter_continent": spot.get("spotterContinent"),
+            "spotter_entity": spot.get("spotterEntity"),
+        }
+    return None
+
+
+def _adxo_entries_by_entity_name():
+    """Maps normalized entity name -> its ADXO entry (active/upcoming only, since
+    _finalize_entry already drops expired entries). Mirrors _watched_by_adxo_id's own
+    pattern but keyed by entity name, since Needed cross-references the whole no_confirms
+    list against ADXO rather than a per-entry stored link."""
+    with _lock:
+        entries = list(_state["entries"])
+    result = {}
+    for e in entries:
+        key = _normalize_entity_name(e["dxcc"])
+        if key:
+            result[key] = e
+    return result
+
+
+def _needed_sort_key_group(item):
+    """0 = has a real live spot right now (the actual point of this whole feature, per
+    Dan's own framing 2026-09-01) -- takes priority even over ADXO-active, unlike Watched's
+    own group ordering, since a Needed entity being merely ADXO-active carries far less
+    weight than Watched's own curated, specific DXpedition callsigns do.
+    1 = ADXO-active (no live spot yet). 2 = ADXO-upcoming. 3 = neither (CSV file order --
+    Club Log ranking not yet built, see module comment above)."""
+    if item["last_spot"]:
+        return 0
+    if item["adxo"] and item["adxo"]["active"]:
+        return 1
+    if item["adxo"]:
+        return 2
+    return 3
+
+
+def _build_dxmon_needed():
+    adxo_by_entity = _adxo_entries_by_entity_name()
+    recent, _recent_err = _hamalert_get("/api/hamalert/recent")
+    recent_spots = recent.get("spots", []) if recent else []
+
+    result = []
+    for idx, ent in enumerate(_no_confirms_entities):
+        name = ent["entity"]
+        adxo_entry = adxo_by_entity.get(_normalize_entity_name(name))
+        adxo_obj = None
+        if adxo_entry:
+            adxo_obj = {
+                "active": adxo_entry["active"],
+                "begin": adxo_entry["begin"],
+                "end": adxo_entry["end"],
+                "info": adxo_entry["info"],
+            }
+        result.append({
+            "type": "needed",
+            "entity": name,
+            "prefix": ent.get("prefix", ""),
+            "adxo": adxo_obj,
+            "last_spot": _find_last_spot_for_entity(name, recent_spots),
+            "_csv_order": idx,  # stable fallback ordering, see _needed_sort_key_group
+        })
+
+    result.sort(key=lambda item: item["_csv_order"])
+    result.sort(
+        key=lambda item: item["last_spot"]["received_at"] if item["last_spot"] else "",
+        reverse=True,
+    )
+    result.sort(key=lambda item: item["adxo"]["begin"] if item["adxo"] else "9999-99-99")
+    result.sort(key=_needed_sort_key_group)
+
+    for item in result:
+        del item["_csv_order"]
+    return result
+
+
+def _build_dxmon_wanted_targets():
+    """Same shape as Needed's own output, so the merged endpoint can present both
+    uniformly -- Wanted entries just carry band/mode too, and are never ADXO-linked
+    (Wanted targets a slot on an entity Dan's already confirmed, not a DXpedition)."""
+    with _wanted_lock:
+        wanted_list = list(_wanted)
+    recent, _recent_err = _hamalert_get("/api/hamalert/recent")
+    recent_spots = recent.get("spots", []) if recent else []
+
+    result = []
+    for w in wanted_list:
+        result.append({
+            "type": "wanted",
+            "entity": w["entity"],
+            "band": w.get("band", ""),
+            "mode": w.get("mode", ""),
+            "note": w.get("note", ""),
+            "adxo": None,
+            "last_spot": _find_last_spot_for_entity(w["entity"], recent_spots, w.get("band"), w.get("mode")),
+        })
+
+    # Real spot right now sorts first within Wanted too, same reasoning as Needed's group 0.
+    result.sort(key=lambda item: item["last_spot"]["received_at"] if item["last_spot"] else "", reverse=True)
+    result.sort(key=lambda item: 0 if item["last_spot"] else 1)
+    return result
+
+
+def _build_dxmon_targets():
+    """Merged Needed+Wanted, tagged by type. Needed sorts before Wanted as a whole group --
+    Dan's explicit priority call 2026-09-01 ('Needed entities would take priority over
+    Wanted') -- each group keeps its own internal ordering from its own builder above."""
+    needed = _build_dxmon_needed()
+    wanted = _build_dxmon_wanted_targets()
+    return needed + wanted
+
+
+@app.route("/api/dxmon/targets")
+def api_dxmon_targets():
+    return jsonify({
+        "updated": datetime.now(EASTERN).isoformat(),
+        "targets": _build_dxmon_targets(),
+    })
+
 
 @app.route("/api/beam/<callsign>")
 def api_beam_test(callsign):
