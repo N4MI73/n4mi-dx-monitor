@@ -407,7 +407,7 @@ static void update_overview_watched(const WatchedData &data)
 
         if (e.comment[0] != '\0') {
             char comment_buf[80];
-            snprintf(comment_buf, sizeof(comment_buf), "\xE2\x80\x9C%s\xE2\x80\x9D", e.comment);
+            snprintf(comment_buf, sizeof(comment_buf), "\"%s\"", e.comment);
             lv_label_set_text(ov.watched_comment, comment_buf);
         } else {
             lv_label_set_text(ov.watched_comment, "");
