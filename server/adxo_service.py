@@ -1077,6 +1077,74 @@ def _adxo_entries_by_entity_name():
     return result
 
 
+# --------------------------------------------------------------------------------------
+# Persistent last-seen tracking for Needed/Wanted -- added 2026-09-02.
+#
+# Real gap found and fixed: hamalert_listener.py only keeps a rolling buffer of the
+# last ~100 spots across ALL entities combined (not per-entity). That's enough to know
+# "is this entity live right now" (last_spot, above) but NOT enough to answer "when did
+# we last see this entity" once a spot ages out of that shared buffer -- a real risk
+# given Watched's own busy DXpeditions (RI1FJL alone produced dozens of spots in a
+# single day earlier this project) can push a rare Needed/Wanted hit out of that window
+# within hours. This persists a per-entity/per-wanted-target "last seen" record
+# separately, surviving both buffer churn and container restarts -- the real data
+# source for the firmware's Tier 2 ("Last hit: 3 days ago") empty-state design.
+# --------------------------------------------------------------------------------------
+
+LAST_SEEN_FILE = os.environ.get("LAST_SEEN_FILE", "/app/data/last_seen.json")
+
+_last_seen_lock = threading.Lock()
+_last_seen = {}  # key -> spot-info dict (same shape _find_last_spot_for_entity returns)
+
+
+def _load_last_seen():
+    global _last_seen
+    try:
+        with open(LAST_SEEN_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            _last_seen = data
+            log.info("Loaded %d last-seen records from %s", len(_last_seen), LAST_SEEN_FILE)
+        else:
+            log.error("Last-seen file did not contain a dict -- starting empty, not overwriting")
+    except FileNotFoundError:
+        log.info("No existing last-seen file at %s -- starting empty", LAST_SEEN_FILE)
+    except (json.JSONDecodeError, OSError) as exc:
+        # Same recovery posture as _load_watched -- never let a corrupt file silently
+        # wipe real data on disk. Start empty in memory this run only.
+        log.error("Failed to load last-seen file (%s) -- starting empty in memory, "
+                   "NOT overwriting the file on disk: %s", LAST_SEEN_FILE, exc)
+        _last_seen = {}
+
+
+def _save_last_seen():
+    """Atomic write, same pattern as _save_watched/_save_wanted."""
+    os.makedirs(os.path.dirname(LAST_SEEN_FILE), exist_ok=True)
+    tmp_path = LAST_SEEN_FILE + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(_last_seen, f, indent=2)
+    os.replace(tmp_path, LAST_SEEN_FILE)
+
+
+def _record_last_seen(key, spot_info):
+    """Only writes to disk when this is genuinely new information -- a fresh key, or a
+    newer received_at than what's already stored (ISO 8601 timestamps sort correctly as
+    plain strings, the same comparison technique already used elsewhere in this
+    codebase). Avoids a disk write on every ~60s device poll for unchanged data."""
+    new_received_at = spot_info.get("received_at") or ""
+    with _last_seen_lock:
+        existing = _last_seen.get(key)
+        if existing and existing.get("received_at", "") >= new_received_at:
+            return  # not newer -- nothing to record
+        _last_seen[key] = spot_info
+        _save_last_seen()
+
+
+def _get_last_seen(key):
+    with _last_seen_lock:
+        return _last_seen.get(key)
+
+
 def _needed_sort_key_group(item):
     """0 = has a real live spot right now (the actual point of this whole feature, per
     Dan's own framing 2026-09-01) -- takes priority even over ADXO-active, unlike Watched's
@@ -1101,6 +1169,7 @@ def _build_dxmon_needed():
     result = []
     for idx, ent in enumerate(_no_confirms_entities):
         name = ent["entity"]
+        key = "needed:" + _normalize_entity_name(name)
         adxo_entry = adxo_by_entity.get(_normalize_entity_name(name))
         adxo_obj = None
         if adxo_entry:
@@ -1110,12 +1179,16 @@ def _build_dxmon_needed():
                 "end": adxo_entry["end"],
                 "info": adxo_entry["info"],
             }
+        last_spot = _find_last_spot_for_entity(name, recent_spots)
+        if last_spot:
+            _record_last_seen(key, last_spot)
         result.append({
             "type": "needed",
             "entity": name,
             "prefix": ent.get("prefix", ""),
             "adxo": adxo_obj,
-            "last_spot": _find_last_spot_for_entity(name, recent_spots),
+            "last_spot": last_spot,
+            "last_seen": _get_last_seen(key),
             "_csv_order": idx,  # stable fallback ordering, see _needed_sort_key_group
         })
 
@@ -1135,7 +1208,10 @@ def _build_dxmon_needed():
 def _build_dxmon_wanted_targets():
     """Same shape as Needed's own output, so the merged endpoint can present both
     uniformly -- Wanted entries just carry band/mode too, and are never ADXO-linked
-    (Wanted targets a slot on an entity Dan's already confirmed, not a DXpedition)."""
+    (Wanted targets a slot on an entity Dan's already confirmed, not a DXpedition).
+    Keyed by the Wanted entry's own stable id (not entity name alone), since two
+    different Wanted entries can share an entity (different band/mode gaps on the
+    same DXCC) and each needs its own independent last-seen record."""
     with _wanted_lock:
         wanted_list = list(_wanted)
     recent, _recent_err = _hamalert_get("/api/hamalert/recent")
@@ -1143,6 +1219,10 @@ def _build_dxmon_wanted_targets():
 
     result = []
     for w in wanted_list:
+        key = "wanted:" + w["id"]
+        last_spot = _find_last_spot_for_entity(w["entity"], recent_spots, w.get("band"), w.get("mode"))
+        if last_spot:
+            _record_last_seen(key, last_spot)
         result.append({
             "type": "wanted",
             "entity": w["entity"],
@@ -1150,7 +1230,8 @@ def _build_dxmon_wanted_targets():
             "mode": w.get("mode", ""),
             "note": w.get("note", ""),
             "adxo": None,
-            "last_spot": _find_last_spot_for_entity(w["entity"], recent_spots, w.get("band"), w.get("mode")),
+            "last_spot": last_spot,
+            "last_seen": _get_last_seen(key),
         })
 
     # Real spot right now sorts first within Wanted too, same reasoning as Needed's group 0.
@@ -1420,6 +1501,7 @@ if __name__ == "__main__":
     _load_watched()
     _load_no_confirms()
     _load_wanted()
+    _load_last_seen()
     t = threading.Thread(target=_scheduler_loop, daemon=True)
     t.start()
     app.run(host="0.0.0.0", port=LISTEN_PORT, threaded=True)

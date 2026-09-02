@@ -95,6 +95,7 @@ bool dxmon_fetch_watched(WatchedData &out)
 
     WatchedData temp;
     temp.count = 0;
+    copy_field(temp.updated, sizeof(temp.updated), doc["updated"]);
 
     for (JsonObject entry : watched) {
         if (temp.count >= MAX_WATCHED_ENTRIES) break;

@@ -271,24 +271,24 @@ static lv_obj_t *make_screen_overview(void)
     // --- WATCHED panel (left) -- built with honest "not yet fetched" state ---
     lv_obj_t *watched = make_panel(scr, 16, 72, 378, 316);
 
-    make_label(watched, "WATCHED", &lv_font_montserrat_16, COLOR_ACCENT_BLUE, 20, 24);
+    make_label(watched, "WATCHED", &lv_font_montserrat_16, COLOR_ACCENT_BLUE, 20, 18);
     ov.watched_status_lbl = make_status_indicator(watched, &ov.watched_status_dot, COLOR_DOT_GRAY,
-                                                   "CONNECTING", COLOR_TEXT_MUTED, 20, 24);
+                                                   "CONNECTING", COLOR_TEXT_MUTED, 20, 18);
 
-    ov.watched_callsign = make_label(watched, "--", &lv_font_montserrat_30, COLOR_TEXT_PRIMARY, 20, 58);
+    ov.watched_callsign = make_label(watched, "--", &lv_font_montserrat_30, COLOR_TEXT_PRIMARY, 20, 44);
     ov.watched_dxcc = make_label(watched, "Waiting for first fetch...", &lv_font_montserrat_16,
-                                  COLOR_TEXT_SECOND, 20, 100);
+                                  COLOR_TEXT_SECOND, 20, 84);
 
-    make_divider(watched, 20, 134, 338);
+    make_divider(watched, 20, 112, 338);
 
-    make_label(watched, "FREQUENCY", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 20, 152);
-    ov.watched_freq = make_label(watched, "--", &lv_font_montserrat_16, COLOR_TEXT_PRIMARY, 20, 172);
+    make_label(watched, "FREQUENCY", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 20, 124);
+    ov.watched_freq = make_label(watched, "--", &lv_font_montserrat_16, COLOR_TEXT_PRIMARY, 20, 142);
 
-    make_label(watched, "MODE", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 164, 152);
+    make_label(watched, "MODE", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 164, 124);
     ov.watched_mode_badge = lv_obj_create(watched);
     lv_obj_remove_style_all(ov.watched_mode_badge);
     lv_obj_set_size(ov.watched_mode_badge, 56, 24);
-    lv_obj_set_pos(ov.watched_mode_badge, 164, 172);
+    lv_obj_set_pos(ov.watched_mode_badge, 164, 142);
     lv_obj_set_style_bg_color(ov.watched_mode_badge, COLOR_BADGE_BLUE_BG, 0);
     lv_obj_set_style_bg_opa(ov.watched_mode_badge, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(ov.watched_mode_badge, COLOR_ACCENT_BLUE, 0);
@@ -300,30 +300,30 @@ static lv_obj_t *make_screen_overview(void)
     lv_obj_set_style_text_color(ov.watched_mode_lbl, COLOR_BADGE_BLUE_TX, 0);
     lv_obj_center(ov.watched_mode_lbl);
 
-    make_label(watched, "LAST SPOT", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 254, 152);
-    ov.watched_last_spot = make_label(watched, "--", &lv_font_montserrat_16, COLOR_TEXT_PRIMARY, 254, 172);
+    make_label(watched, "LAST SPOT", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 254, 124);
+    ov.watched_last_spot = make_label(watched, "--", &lv_font_montserrat_16, COLOR_TEXT_PRIMARY, 254, 142);
 
-    make_divider(watched, 20, 212, 338);
+    make_divider(watched, 20, 174, 338);
 
     // Comment row -- new 2026-09-01. Fixed width + LV_LABEL_LONG_DOT truncation, unlike
     // some earlier labels, since operator comments can genuinely run long (real examples
     // seen: "FN41<F2>LR90 FT8  Sent: -11  R", "good sig into en80, multi stre") and this
     // avoids repeating the fixed-x-position clipping bug found 2026-08-29.
-    make_label(watched, "COMMENT", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 20, 230);
+    make_label(watched, "COMMENT", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 20, 184);
     ov.watched_comment = lv_label_create(watched);
     lv_label_set_text(ov.watched_comment, "");
     lv_obj_set_style_text_font(ov.watched_comment, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(ov.watched_comment, COLOR_TEXT_SECOND, 0);
     lv_label_set_long_mode(ov.watched_comment, LV_LABEL_LONG_DOT);
     lv_obj_set_width(ov.watched_comment, 338);
-    lv_obj_set_pos(ov.watched_comment, 20, 248);
+    lv_obj_set_pos(ov.watched_comment, 20, 200);
 
-    make_divider(watched, 20, 278, 338);
+    make_divider(watched, 20, 225, 338);
 
-    make_label(watched, "ACTIVE THROUGH", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 20, 296);
-    ov.watched_active_through = make_label(watched, "--", &lv_font_montserrat_16, COLOR_TEXT_SECOND, 20, 318);
+    make_label(watched, "ACTIVE THROUGH", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 20, 235);
+    ov.watched_active_through = make_label(watched, "--", &lv_font_montserrat_16, COLOR_TEXT_SECOND, 20, 251);
 
-    ov.watched_badge = make_pill_badge(watched, "", 20, 346);
+    ov.watched_badge = make_pill_badge(watched, "", 20, 278);
     ov.watched_badge_lbl = lv_obj_get_child(ov.watched_badge, 0);
     lv_obj_add_flag(ov.watched_badge, LV_OBJ_FLAG_HIDDEN);
 
@@ -666,6 +666,225 @@ static void create_tab_bar(lv_obj_t *parent, int active_index)
 // ---------------------------------------------------------------------------
 static uint32_t last_fetch_ms = 0;
 
+// ---------------------------------------------------------------------------
+// Watched roster (tab bar destination) -- full scrollable list of every
+// watched entry, built from the approved dxmon_watched_mockup.svg. Real
+// content, replacing the "0 TRACKED" placeholder.
+// ---------------------------------------------------------------------------
+
+/**
+ * Howard Hinnant's well-known public-domain "days from civil" algorithm --
+ * converts a Y/M/D date to a day-count (proleptic Gregorian), correct across
+ * month/year/leap-year boundaries. Used only for a one-shot day-difference
+ * computation per fetch (comparing adxo.begin against the server's own
+ * "updated" timestamp) -- not live elapsed-time tracking, so no NTP/RTC is
+ * needed on the device, per the 2026-09-01 design discussion.
+ */
+static long days_from_civil(int y, int m, int d)
+{
+    y -= (m <= 2);
+    long era = (y >= 0 ? y : y - 399) / 400;
+    unsigned yoe = (unsigned)(y - era * 400);
+    unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + (long)doe - 719468;
+}
+
+static bool parse_iso_ymd(const char *iso, int *y, int *m, int *d)
+{
+    if (!iso || strlen(iso) < 10) return false;
+    *y = (iso[0] - '0') * 1000 + (iso[1] - '0') * 100 + (iso[2] - '0') * 10 + (iso[3] - '0');
+    *m = (iso[5] - '0') * 10 + (iso[6] - '0');
+    *d = (iso[8] - '0') * 10 + (iso[9] - '0');
+    return (*m >= 1 && *m <= 12 && *d >= 1 && *d <= 31);
+}
+
+/**
+ * "Starts in N days" (or "Starts today"/"Starts tomorrow" for the near
+ * cases, which read far more naturally than "in 0 days"/"in 1 days") as the
+ * primary line, plus the plain exact date as a smaller secondary line --
+ * per Dan's request 2026-09-01. Falls back to just the plain date on either
+ * string if the day-math inputs don't parse cleanly, rather than showing
+ * something obviously wrong.
+ */
+static void format_starts_in(const char *begin_iso, const char *now_iso,
+                              char *relative_out, size_t relative_size,
+                              char *date_out, size_t date_size)
+{
+    format_short_date(begin_iso, date_out, date_size);
+
+    int by, bm, bd, ny, nm, nd;
+    if (!parse_iso_ymd(begin_iso, &by, &bm, &bd) || !parse_iso_ymd(now_iso, &ny, &nm, &nd)) {
+        snprintf(relative_out, relative_size, "Starts %s", date_out);
+        return;
+    }
+
+    long diff = days_from_civil(by, bm, bd) - days_from_civil(ny, nm, nd);
+    if (diff <= 0) {
+        snprintf(relative_out, relative_size, "Starts today");
+    } else if (diff == 1) {
+        snprintf(relative_out, relative_size, "Starts tomorrow");
+    } else {
+        snprintf(relative_out, relative_size, "Starts in %ld days", diff);
+    }
+}
+
+static lv_obj_t *watched_roster_container = NULL;
+static lv_obj_t *watched_tab_status_lbl = NULL;
+
+static lv_obj_t *make_row_card(lv_obj_t *parent, int y, bool dim_bg)
+{
+    lv_obj_t *card = lv_obj_create(parent);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_pos(card, 0, y);
+    lv_obj_set_size(card, 760, 76);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(card, dim_bg ? lv_color_hex(0x0e1320) : COLOR_PANEL_BG, 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card, COLOR_PANEL_BORDER, 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_radius(card, 8, 0);
+    return card;
+}
+
+static void make_watched_row(lv_obj_t *container, int index, const WatchedEntry &e, const char *now_iso)
+{
+    int y = index * 84;  // 76px row + 8px gap, matching the approved mockup
+    bool active = e.has_last_spot;
+    bool upcoming = !active && e.adxo_active == false && e.adxo_end[0] != '\0';
+    // Note: adxo_end is always populated when an ADXO link exists (even for inactive/future
+    // entries -- the field just holds whichever date the server sent); adxo_active specifically
+    // distinguishes "already live" from "not yet." A real entry with no ADXO link at all (e.g.
+    // a manually-added Watched callsign) has adxo_end empty -- the fourth, no-precedent-in-mockup
+    // fallback state below.
+    bool waiting = !active && e.adxo_active == true;
+    bool no_adxo = !active && !upcoming && !waiting;
+
+    lv_obj_t *card = make_row_card(container, y, !active);
+
+    lv_color_t dot_color = active ? COLOR_STATUS_GREEN : COLOR_DOT_GRAY;
+    lv_obj_t *dot = lv_obj_create(card);
+    lv_obj_remove_style_all(dot);
+    lv_obj_set_size(dot, 10, 10);
+    lv_obj_set_style_radius(dot, 5, 0);
+    lv_obj_set_style_bg_color(dot, dot_color, 0);
+    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+    lv_obj_set_pos(dot, 20, 33);
+
+    lv_color_t text_primary = active ? COLOR_TEXT_PRIMARY : COLOR_TEXT_SECOND;
+    lv_color_t text_secondary = active ? COLOR_TEXT_SECOND : COLOR_TEXT_MUTED;
+
+    make_label(card, e.callsign, &lv_font_montserrat_26, text_primary, 36, 12);
+    make_label(card, e.dxcc, &lv_font_montserrat_14, text_secondary, 36, 44);
+
+    if (active) {
+        lv_obj_t *mode_badge = lv_obj_create(card);
+        lv_obj_remove_style_all(mode_badge);
+        lv_obj_set_size(mode_badge, 56, 24);
+        lv_obj_set_pos(mode_badge, 574, 16);
+        lv_obj_set_style_bg_color(mode_badge, COLOR_BADGE_BLUE_BG, 0);
+        lv_obj_set_style_bg_opa(mode_badge, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(mode_badge, COLOR_ACCENT_BLUE, 0);
+        lv_obj_set_style_border_width(mode_badge, 1, 0);
+        lv_obj_set_style_radius(mode_badge, 6, 0);
+        char mode_buf[16];
+        strncpy(mode_buf, e.mode, sizeof(mode_buf) - 1);
+        mode_buf[sizeof(mode_buf) - 1] = '\0';
+        to_upper_inplace(mode_buf);
+        lv_obj_t *mode_lbl = lv_label_create(mode_badge);
+        lv_label_set_text(mode_lbl, mode_buf);
+        lv_obj_set_style_text_font(mode_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(mode_lbl, COLOR_BADGE_BLUE_TX, 0);
+        lv_obj_center(mode_lbl);
+
+        char freq_buf[24];
+        snprintf(freq_buf, sizeof(freq_buf), "%s MHz", e.frequency);
+        make_label(card, freq_buf, &lv_font_montserrat_16, COLOR_TEXT_PRIMARY, 640, 20);
+
+        // Plain reformatted timestamp, not computed elapsed-time ("2m ago") -- deliberately
+        // consistent with Overview's own already-proven treatment, not a new deviation.
+        char when_buf[24];
+        format_short_datetime(e.received_at, when_buf, sizeof(when_buf));
+        lv_obj_t *when_lbl = lv_label_create(card);
+        lv_label_set_text(when_lbl, when_buf);
+        lv_obj_set_style_text_font(when_lbl, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(when_lbl, COLOR_TEXT_MUTED, 0);
+        lv_obj_align(when_lbl, LV_ALIGN_TOP_RIGHT, -20, 50);
+    } else if (upcoming) {
+        lv_obj_t *pill = lv_obj_create(card);
+        lv_obj_remove_style_all(pill);
+        lv_obj_set_size(pill, 176, 42);
+        lv_obj_set_pos(pill, 564, 17);
+        lv_obj_set_style_bg_color(pill, COLOR_BADGE_BG, 0);
+        lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(pill, 13, 0);
+
+        char relative_buf[24];
+        char date_buf[16];
+        format_starts_in(e.adxo_end, now_iso, relative_buf, sizeof(relative_buf), date_buf, sizeof(date_buf));
+        // Note: e.adxo_end is reused here as the relevant ADXO date for this row -- see the
+        // struct comment; for an upcoming (not-yet-active) entry this is effectively its begin
+        // date as sent by the server.
+
+        lv_obj_t *rel_lbl = lv_label_create(pill);
+        lv_label_set_text(rel_lbl, relative_buf);
+        lv_obj_set_style_text_font(rel_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(rel_lbl, COLOR_BADGE_TEXT, 0);
+        lv_obj_align(rel_lbl, LV_ALIGN_TOP_MID, 0, 5);
+
+        char date_line[24];
+        snprintf(date_line, sizeof(date_line), "(%s)", date_buf);
+        lv_obj_t *date_lbl = lv_label_create(pill);
+        lv_label_set_text(date_lbl, date_line);
+        lv_obj_set_style_text_font(date_lbl, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(date_lbl, COLOR_TEXT_MUTED, 0);
+        lv_obj_align(date_lbl, LV_ALIGN_TOP_MID, 0, 23);
+    } else if (waiting) {
+        lv_obj_t *lbl = lv_label_create(card);
+        lv_label_set_text(lbl, "Awaiting first spot");
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl, COLOR_TEXT_MUTED, 0);
+        lv_obj_align(lbl, LV_ALIGN_RIGHT_MID, -20, 0);
+    } else {
+        lv_obj_t *lbl = lv_label_create(card);
+        lv_label_set_text(lbl, "No schedule data");
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl, COLOR_TEXT_MUTED, 0);
+        lv_obj_align(lbl, LV_ALIGN_RIGHT_MID, -20, 0);
+    }
+}
+
+static void update_watched_roster(const WatchedData &data)
+{
+    if (!watched_roster_container) return;
+    lv_obj_clean(watched_roster_container);
+    for (int i = 0; i < data.count; i++) {
+        make_watched_row(watched_roster_container, i, data.entries[i], data.updated);
+    }
+
+    if (watched_tab_status_lbl) {
+        char count_buf[24];
+        snprintf(count_buf, sizeof(count_buf), "%d TRACKED", data.count);
+        lv_label_set_text(watched_tab_status_lbl, count_buf);
+    }
+}
+
+static lv_obj_t *make_screen_watched(void)
+{
+    lv_obj_t *scr = make_screen();
+    watched_tab_status_lbl = create_header(scr, "WATCHED", "0 TRACKED");
+
+    watched_roster_container = lv_obj_create(scr);
+    lv_obj_remove_style_all(watched_roster_container);
+    lv_obj_set_pos(watched_roster_container, 16, 70);
+    lv_obj_set_size(watched_roster_container, 760, 344);
+    lv_obj_set_style_bg_opa(watched_roster_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_scroll_dir(watched_roster_container, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(watched_roster_container, LV_SCROLLBAR_MODE_AUTO);
+
+    return scr;
+}
+
 static void do_full_refresh(void)
 {
     WatchedData data;
@@ -673,6 +892,7 @@ static void do_full_refresh(void)
         Serial.printf("Watched refresh OK, %d entr%s\n", data.count, data.count == 1 ? "y" : "ies");
         lvgl_port_lock(-1);
         update_overview_watched(data);
+        update_watched_roster(data);
         lvgl_port_unlock();
     } else {
         Serial.println("Watched refresh failed -- keeping last known-good data");
@@ -716,7 +936,7 @@ void setup()
     lvgl_port_lock(-1);
 
     screens[0] = make_screen_overview();
-    screens[1] = make_screen_placeholder("WATCHED", "0 TRACKED");
+    screens[1] = make_screen_watched();
     screens[2] = make_screen_placeholder("NEEDED", "0 REMAINING");
     screens[3] = make_screen_config();
 

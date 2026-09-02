@@ -30,6 +30,9 @@ struct WatchedEntry {
 struct WatchedData {
     WatchedEntry entries[MAX_WATCHED_ENTRIES];
     int count;
+    char updated[32];   // raw ISO 8601, the server's own clock at fetch time -- used as the
+                         // "now" reference for relative-day math (e.g. "Starts in 6 days") on
+                         // the Watched roster screen, avoiding any need for device-side NTP/RTC.
 };
 
 /**
