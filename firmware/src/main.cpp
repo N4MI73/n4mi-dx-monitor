@@ -257,6 +257,9 @@ static OverviewWidgets ov;
  * NEEDED panel widgets -- three tiers, all built up front, toggled via
  * LV_OBJ_FLAG_HIDDEN on each tier's own group container. See make_screen_overview()
  * for the full layout and the 2026-09-01/2026-09-02 design/backend history.
+ * The kind badge (t1_type_*) shows ENTITY/SLOT (derived from band/mode presence,
+ * 2026-09-04 unified-list redesign) -- reuses the same amber/blue identity colors
+ * the old NEEDED/WANTED badge used, just renamed to match the new terminology.
  */
 struct NeededWidgets {
     lv_obj_t *status_lbl;
@@ -368,11 +371,12 @@ static lv_obj_t *make_screen_overview(void)
     lv_obj_add_flag(ov.watched_badge, LV_OBJ_FLAG_HIDDEN);
 
     // --- NEEDED panel (right) -- real content, three-tier design agreed 2026-09-01,
-    // backend (/api/dxmon/targets, including persistent last_seen) confirmed live
-    // 2026-09-02. All three tiers' widgets are built up front and toggled via
-    // LV_OBJ_FLAG_HIDDEN on their own group container, rather than destroyed/rebuilt
-    // each refresh -- matches the stable, efficient pattern already proven for
-    // Overview's WATCHED panel.
+    // backend (/api/dxmon/needed, including persistent last_seen) confirmed live
+    // 2026-09-02; renamed/simplified from /api/dxmon/targets 2026-09-04 when Needed
+    // and Wanted merged into one curated list. All three tiers' widgets are built
+    // up front and toggled via LV_OBJ_FLAG_HIDDEN on their own group container,
+    // rather than destroyed/rebuilt each refresh -- matches the stable, efficient
+    // pattern already proven for Overview's WATCHED panel.
     lv_obj_t *needed = make_panel(scr, 406, 72, 378, 316);
     make_label(needed, "NEEDED", &lv_font_montserrat_16, COLOR_ACCENT_AMBER, 20, 18);
     nw.status_lbl = lv_label_create(needed);
@@ -593,8 +597,10 @@ static void update_wifi_glyph(void)
 }
 
 // ---------------------------------------------------------------------------
-// NEEDED panel (Overview) -- three-tier display over the merged Needed+Wanted
-// targets feed. Tier chosen fresh on every fetch:
+// NEEDED panel (Overview) -- three-tier display over /api/dxmon/needed, Dan's
+// unified curated list (renamed/simplified 2026-09-04 from the old
+// /api/dxmon/targets, which cross-referenced all of no_confirms.csv against
+// ADXO + live spots). Tier chosen fresh on every fetch:
 //   1. Something has a real live spot right now (last_spot present on any entry)
 //      -> feature it, mirroring Watched's own tier-1 treatment.
 //   2. Nothing live, but at least one entry has persisted last_seen data
@@ -605,7 +611,7 @@ static void update_wifi_glyph(void)
 //      backend work (persistent last_seen) that made Tier 2 possible at all.
 // ---------------------------------------------------------------------------
 
-static int select_featured_target(const TargetsData &data, bool want_live)
+static int select_featured_target(const NeededData &data, bool want_live)
 {
     int best = -1;
     for (int i = 0; i < data.count; i++) {
@@ -618,7 +624,7 @@ static int select_featured_target(const TargetsData &data, bool want_live)
     return best;
 }
 
-static void populate_ticker(const TargetsData &data)
+static void populate_ticker(const NeededData &data)
 {
     ticker_name_count = 0;
     for (int i = 0; i < data.count && ticker_name_count < MAX_TICKER_NAMES; i++) {
@@ -646,14 +652,17 @@ static void advance_ticker_if_needed(void)
     ticker_last_change_ms = millis();
 }
 
-static void update_overview_needed(const TargetsData &data)
+static void update_overview_needed(const NeededData &data)
 {
     lv_obj_add_flag(nw.loading_lbl, LV_OBJ_FLAG_HIDDEN);
 
-    int needed_count = 0, wanted_count = 0;
+    // 2026-09-04: "kind" replaces the old "type" (needed/wanted) field -- an entry
+    // is "slot" when it has a specific band/mode, "entity" otherwise (whole-entity
+    // target). Same idea as before, renamed to match the unified list's own terms.
+    int entity_count = 0, slot_count = 0;
     for (int i = 0; i < data.count; i++) {
-        if (strcmp(data.entries[i].type, "wanted") == 0) wanted_count++;
-        else needed_count++;
+        if (strcmp(data.entries[i].kind, "slot") == 0) slot_count++;
+        else entity_count++;
     }
     char status_buf[24];
     snprintf(status_buf, sizeof(status_buf), "%d TRACKED", data.count);
@@ -667,25 +676,27 @@ static void update_overview_needed(const TargetsData &data)
         lv_obj_add_flag(nw.t2_group, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(nw.t3_group, LV_OBJ_FLAG_HIDDEN);
 
-        const TargetEntry &t = data.entries[live_idx];
-        bool is_wanted = (strcmp(t.type, "wanted") == 0);
+        const NeededEntry &t = data.entries[live_idx];
+        bool is_slot = (strcmp(t.kind, "slot") == 0);
 
-        lv_label_set_text(nw.t1_type_lbl, is_wanted ? "WANTED" : "NEEDED");
-        lv_obj_set_style_bg_color(nw.t1_type_badge, is_wanted ? COLOR_BADGE_BLUE_BG : lv_color_hex(0x332a10), 0);
+        lv_label_set_text(nw.t1_type_lbl, is_slot ? "SLOT" : "ENTITY");
+        lv_obj_set_style_bg_color(nw.t1_type_badge, is_slot ? COLOR_BADGE_BLUE_BG : lv_color_hex(0x332a10), 0);
         lv_obj_set_style_bg_opa(nw.t1_type_badge, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(nw.t1_type_badge, is_wanted ? COLOR_ACCENT_BLUE : COLOR_ACCENT_AMBER, 0);
-        lv_obj_set_style_text_color(nw.t1_type_lbl, is_wanted ? COLOR_BADGE_BLUE_TX : COLOR_ACCENT_AMBER, 0);
+        lv_obj_set_style_border_color(nw.t1_type_badge, is_slot ? COLOR_ACCENT_BLUE : COLOR_ACCENT_AMBER, 0);
+        lv_obj_set_style_text_color(nw.t1_type_lbl, is_slot ? COLOR_BADGE_BLUE_TX : COLOR_ACCENT_AMBER, 0);
 
         lv_label_set_text(nw.t1_entity, t.entity);
 
-        if (is_wanted) {
+        // Subtitle: band/mode for a slot target. Entity-kind targets have no
+        // equivalent subtitle now that the old CSV "prefix" field is gone (that
+        // was specific to the retired no_confirms.csv cross-reference) -- left
+        // blank rather than showing something misleading.
+        if (is_slot) {
             char sub_buf[48];
             snprintf(sub_buf, sizeof(sub_buf), "%s%s%s", t.band, (t.band[0] && t.mode[0]) ? " " : "", t.mode);
             lv_label_set_text(nw.t1_subtitle, sub_buf);
         } else {
-            char sub_buf[24];
-            snprintf(sub_buf, sizeof(sub_buf), "%s", t.prefix[0] ? t.prefix : "");
-            lv_label_set_text(nw.t1_subtitle, sub_buf);
+            lv_label_set_text(nw.t1_subtitle, "");
         }
 
         char freq_buf[24];
@@ -721,7 +732,7 @@ static void update_overview_needed(const TargetsData &data)
         lv_obj_clear_flag(nw.t2_group, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(nw.t3_group, LV_OBJ_FLAG_HIDDEN);
 
-        const TargetEntry &t = data.entries[seen_idx];
+        const NeededEntry &t = data.entries[seen_idx];
         lv_label_set_text(nw.t2_entity, t.entity);
         char when_buf[24];
         char line_buf[40];
@@ -737,7 +748,7 @@ static void update_overview_needed(const TargetsData &data)
     lv_obj_clear_flag(nw.t3_group, LV_OBJ_FLAG_HIDDEN);
 
     char count_buf[40];
-    snprintf(count_buf, sizeof(count_buf), "%d needed - %d wanted tracked", needed_count, wanted_count);
+    snprintf(count_buf, sizeof(count_buf), "%d entity - %d slot tracked", entity_count, slot_count);
     lv_label_set_text(nw.t3_count, count_buf);
     populate_ticker(data);
     needed_tier3_active = true;
@@ -1188,25 +1199,25 @@ static lv_obj_t *make_screen_watched(void)
 }
 
 // ---------------------------------------------------------------------------
-// Needed+Wanted roster (tab bar destination) -- full scrollable list over
-// /api/dxmon/targets. Reuses Watched roster's proven row-card pattern
-// (make_row_card, LV_DIR_VER touch-scroll) and format_starts_in()'s
-// day-count math, extended with a type badge and the real states this
-// merged feed actually produces.
+// Needed roster (tab bar destination) -- full scrollable list over
+// /api/dxmon/needed, Dan's unified curated list (renamed/simplified 2026-09-04
+// from /api/dxmon/targets). Reuses Watched roster's proven row-card pattern
+// (make_row_card, LV_DIR_VER touch-scroll), extended with a kind badge.
+// Three real states now (down from the old five): Live, Recently Seen, Never
+// Spotted -- no more Awaiting First Spot / Upcoming, since those depended on
+// the ADXO cross-reference this list no longer has (ADXO stays Watched-only).
 // ---------------------------------------------------------------------------
 
 static lv_obj_t *needed_roster_container = NULL;
 static lv_obj_t *needed_tab_status_lbl = NULL;
 
-static void make_target_row(lv_obj_t *container, int index, const TargetEntry &t, const char *now_iso)
+static void make_target_row(lv_obj_t *container, int index, const NeededEntry &t)
 {
     int y = index * 84;
-    bool is_wanted = (strcmp(t.type, "wanted") == 0);
+    bool is_slot = (strcmp(t.kind, "slot") == 0);
     bool live = t.last_spot.present;
     bool seen = !live && t.last_seen.present;
-    bool adxo_active_waiting = !live && !seen && t.has_adxo && t.adxo_active;
-    bool adxo_upcoming = !live && !seen && t.has_adxo && !t.adxo_active;
-    // else: cold, never seen, no ADXO link -- the common case for most Needed entities.
+    // else: never spotted -- the common case for a freshly-added entry.
 
     lv_obj_t *card = make_row_card(container, y, !live);
 
@@ -1219,23 +1230,22 @@ static void make_target_row(lv_obj_t *container, int index, const TargetEntry &t
     lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
     lv_obj_set_pos(dot, 20, 33);
 
-    // Type badge -- Dan's explicit request 2026-08-25: visually distinguish Needed vs.
-    // Wanted entries. Amber for Needed (matches the panel's own established identity
-    // color), blue for Wanted (matches Watched's identity, since Wanted originated as
-    // a more specifically-curated, Watched-like target).
+    // Kind badge -- derived from band/mode presence (2026-09-04), replacing the old
+    // stored needed/wanted type field. Same amber/blue identity colors carried
+    // forward from the pre-merge NEEDED/WANTED badge, just relabeled ENTITY/SLOT.
     lv_obj_t *type_badge = lv_obj_create(card);
     lv_obj_remove_style_all(type_badge);
     lv_obj_set_size(type_badge, 62, 20);
     lv_obj_set_pos(type_badge, 36, 10);
     lv_obj_set_style_radius(type_badge, 5, 0);
     lv_obj_set_style_border_width(type_badge, 1, 0);
-    lv_obj_set_style_bg_color(type_badge, is_wanted ? COLOR_BADGE_BLUE_BG : lv_color_hex(0x332a10), 0);
+    lv_obj_set_style_bg_color(type_badge, is_slot ? COLOR_BADGE_BLUE_BG : lv_color_hex(0x332a10), 0);
     lv_obj_set_style_bg_opa(type_badge, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(type_badge, is_wanted ? COLOR_ACCENT_BLUE : COLOR_ACCENT_AMBER, 0);
+    lv_obj_set_style_border_color(type_badge, is_slot ? COLOR_ACCENT_BLUE : COLOR_ACCENT_AMBER, 0);
     lv_obj_t *type_lbl = lv_label_create(type_badge);
-    lv_label_set_text(type_lbl, is_wanted ? "WANTED" : "NEEDED");
+    lv_label_set_text(type_lbl, is_slot ? "SLOT" : "ENTITY");
     lv_obj_set_style_text_font(type_lbl, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(type_lbl, is_wanted ? COLOR_BADGE_BLUE_TX : COLOR_ACCENT_AMBER, 0);
+    lv_obj_set_style_text_color(type_lbl, is_slot ? COLOR_BADGE_BLUE_TX : COLOR_ACCENT_AMBER, 0);
     lv_obj_center(type_lbl);
 
     lv_color_t text_primary = live ? COLOR_TEXT_PRIMARY : COLOR_TEXT_SECOND;
@@ -1247,15 +1257,14 @@ static void make_target_row(lv_obj_t *container, int index, const TargetEntry &t
     lv_obj_set_width(entity_lbl, 360);
     lv_obj_set_pos(entity_lbl, 36, 34);
 
-    // Subtitle: band/mode for Wanted, prefix for Needed (when present -- a couple of
-    // real entities, e.g. Spratly Islands, have an empty prefix).
-    char sub_buf[32];
-    if (is_wanted) {
+    // Subtitle: band/mode for a slot target. Entity-kind targets have no
+    // equivalent now that the old CSV "prefix" field is gone -- row omits the
+    // subtitle line's text entirely rather than showing something misleading.
+    if (is_slot) {
+        char sub_buf[32];
         snprintf(sub_buf, sizeof(sub_buf), "%s%s%s", t.band, (t.band[0] && t.mode[0]) ? " " : "", t.mode);
-    } else {
-        snprintf(sub_buf, sizeof(sub_buf), "%s", t.prefix);
+        make_label(card, sub_buf, &lv_font_montserrat_12, COLOR_TEXT_MUTED, 36, 56);
     }
-    make_label(card, sub_buf, &lv_font_montserrat_12, COLOR_TEXT_MUTED, 36, 56);
 
     if (live || seen) {
         const SpotInfo &spot = live ? t.last_spot : t.last_seen;
@@ -1294,38 +1303,6 @@ static void make_target_row(lv_obj_t *container, int index, const TargetEntry &t
         lv_obj_set_style_text_font(when_lbl, &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(when_lbl, COLOR_TEXT_MUTED, 0);
         lv_obj_align(when_lbl, LV_ALIGN_TOP_RIGHT, -20, 50);
-    } else if (adxo_upcoming) {
-        lv_obj_t *pill = lv_obj_create(card);
-        lv_obj_remove_style_all(pill);
-        lv_obj_set_size(pill, 176, 42);
-        lv_obj_set_pos(pill, 564, 17);
-        lv_obj_set_style_bg_color(pill, COLOR_BADGE_BG, 0);
-        lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(pill, 13, 0);
-
-        char relative_buf[24];
-        char date_buf[16];
-        format_starts_in(t.adxo_begin, now_iso, relative_buf, sizeof(relative_buf), date_buf, sizeof(date_buf));
-
-        lv_obj_t *rel_lbl = lv_label_create(pill);
-        lv_label_set_text(rel_lbl, relative_buf);
-        lv_obj_set_style_text_font(rel_lbl, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(rel_lbl, COLOR_BADGE_TEXT, 0);
-        lv_obj_align(rel_lbl, LV_ALIGN_TOP_MID, 0, 5);
-
-        char date_line[24];
-        snprintf(date_line, sizeof(date_line), "(%s)", date_buf);
-        lv_obj_t *date_lbl = lv_label_create(pill);
-        lv_label_set_text(date_lbl, date_line);
-        lv_obj_set_style_text_font(date_lbl, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_color(date_lbl, COLOR_TEXT_MUTED, 0);
-        lv_obj_align(date_lbl, LV_ALIGN_TOP_MID, 0, 23);
-    } else if (adxo_active_waiting) {
-        lv_obj_t *lbl = lv_label_create(card);
-        lv_label_set_text(lbl, "Awaiting first spot");
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(lbl, COLOR_TEXT_MUTED, 0);
-        lv_obj_align(lbl, LV_ALIGN_RIGHT_MID, -20, 0);
     } else {
         lv_obj_t *lbl = lv_label_create(card);
         lv_label_set_text(lbl, "Never spotted");
@@ -1335,12 +1312,12 @@ static void make_target_row(lv_obj_t *container, int index, const TargetEntry &t
     }
 }
 
-static void update_needed_roster(const TargetsData &data)
+static void update_needed_roster(const NeededData &data)
 {
     if (!needed_roster_container) return;
     lv_obj_clean(needed_roster_container);
     for (int i = 0; i < data.count; i++) {
-        make_target_row(needed_roster_container, i, data.entries[i], data.updated);
+        make_target_row(needed_roster_container, i, data.entries[i]);
     }
 
     if (needed_tab_status_lbl) {
@@ -1368,12 +1345,14 @@ static lv_obj_t *make_screen_needed(void)
 
 static void do_full_refresh(void)
 {
-    // Both structs are `static`, not stack-local, deliberately -- TargetsData in
-    // particular is roughly 38-40KB at MAX_TARGET_ENTRIES=80 (each entry carries two
-    // full SpotInfo structs), which badly overflows the ESP32's default ~8KB task
-    // stack if declared as a local variable here. Real bug found and fixed 2026-09-02
-    // after real hardware showed corrupted, flickering screen content -- a classic
-    // stack-overflow symptom, not a mysterious glitch.
+    // `static`, not stack-local, deliberately -- the real 2026-09-02 bug this avoids
+    // was a stack overflow from a large struct declared as a local variable here
+    // (the ESP32's default task stack is only ~8KB), confirmed via real hardware
+    // showing corrupted, flickering screen content -- a classic stack-overflow
+    // symptom, not a mysterious glitch. WatchedData itself is small (max 10
+    // entries); the much larger Needed data below is PSRAM-heap-allocated instead
+    // of static, for reasons specific to its own size history -- see its own
+    // comment further down.
     static WatchedData data;
     if (dxmon_fetch_watched(data)) {
         Serial.printf("Watched refresh OK, %d entr%s\n", data.count, data.count == 1 ? "y" : "ies");
@@ -1385,28 +1364,32 @@ static void do_full_refresh(void)
         Serial.println("Watched refresh failed -- keeping last known-good data");
     }
 
-    // PSRAM-backed, not `static` in internal DRAM -- real link-time bug found and
-    // fixed 2026-09-03: combining this ~40KB struct as internal-DRAM `static` with
-    // the LVGL pool increase (see lv_conf.h) overflowed the ESP32-S3's internal SRAM
-    // budget by ~35KB at link time. TargetsData is only touched once per ~60s fetch,
-    // so PSRAM's slightly slower access is irrelevant here -- unlike, say, a display
-    // frame buffer touched every frame. Allocated once, lazily, on first use (not at
-    // global/static-init time, since PSRAM isn't ready that early).
-    static TargetsData *targets = nullptr;
-    if (!targets) {
-        targets = (TargetsData *)heap_caps_malloc(sizeof(TargetsData), MALLOC_CAP_SPIRAM);
-        if (!targets) {
-            Serial.println("do_full_refresh: PSRAM allocation for TargetsData failed");
+    // PSRAM-backed, not `static` in internal DRAM -- kept from the original Targets-
+    // era fix (2026-09-03: combining a large struct as internal-DRAM `static` with
+    // the LVGL pool increase in lv_conf.h overflowed the ESP32-S3's internal SRAM
+    // budget by ~35KB at link time). NeededData is much smaller now at
+    // MAX_NEEDED_ENTRIES=30 (2026-09-04's unified curated-list redesign) -- no longer
+    // close to that budget conflict -- but PSRAM allocation stays as sound general
+    // practice rather than being moved back to internal RAM for no real benefit.
+    // Only touched once per ~60s fetch, so PSRAM's slightly slower access is
+    // irrelevant here -- unlike, say, a display frame buffer touched every frame.
+    // Allocated once, lazily, on first use (not at global/static-init time, since
+    // PSRAM isn't ready that early).
+    static NeededData *needed = nullptr;
+    if (!needed) {
+        needed = (NeededData *)heap_caps_malloc(sizeof(NeededData), MALLOC_CAP_SPIRAM);
+        if (!needed) {
+            Serial.println("do_full_refresh: PSRAM allocation for NeededData failed");
         }
     }
-    if (targets && dxmon_fetch_targets(*targets)) {
-        Serial.printf("Targets refresh OK, %d entr%s\n", targets->count, targets->count == 1 ? "y" : "ies");
+    if (needed && dxmon_fetch_needed(*needed)) {
+        Serial.printf("Needed refresh OK, %d entr%s\n", needed->count, needed->count == 1 ? "y" : "ies");
         lvgl_port_lock(-1);
-        update_overview_needed(*targets);
-        update_needed_roster(*targets);
+        update_overview_needed(*needed);
+        update_needed_roster(*needed);
         lvgl_port_unlock();
     } else {
-        Serial.println("Targets refresh failed -- keeping last known-good data");
+        Serial.println("Needed refresh failed -- keeping last known-good data");
     }
 
     PreviewStatus ps;

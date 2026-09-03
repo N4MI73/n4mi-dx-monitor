@@ -55,19 +55,27 @@ struct PreviewStatus {
 bool dxmon_fetch_preview_status(PreviewStatus &out);
 
 /**
- * Mirrors /api/dxmon/targets, confirmed live 2026-09-02 -- the merged
- * Needed+Wanted feed. Needed entries carry `prefix` (may be empty for a
- * couple of real entities, e.g. Spratly Islands); Wanted entries carry
- * `band`/`mode`/`note` instead. `band` is sized generously (24 chars) since
- * a real Wanted entry can hold a multi-value string like "17M, 15M", not
- * just a single band.
+ * Mirrors /api/dxmon/needed (renamed from /api/dxmon/targets 2026-09-04, when
+ * Needed and Wanted merged into one curated list -- see the series brief/Joplin
+ * note for the full design). No more ADXO cross-reference and no more
+ * no_confirms.csv "prefix" field -- both were specific to the old CSV-driven
+ * Needed path, which no longer exists; ADXO stays Watched-only going forward.
+ *
+ * `kind` is a derived (not stored) server-side value: "entity" when both band
+ * and mode are blank (a whole never-confirmed-entity target, the old Needed
+ * semantic), "slot" when either is set (a specific band/mode gap on an
+ * already-confirmed entity, the old Wanted semantic). `id` is the entry's own
+ * stable id from needed.json -- kept so two entries sharing the same entity
+ * (e.g. a whole-entity target and a separate specific-slot target on the same
+ * DXCC) can still be told apart if a future screen needs to reference one
+ * specifically (e.g. a row-tap detail view).
  *
  * `last_spot` = strictly "currently in HamAlert's live recent-spots buffer
  * right now" -- a real-time signal. `last_seen` = the persisted record of
  * the most recent real hit ever, which may equal last_spot (just hit) or be
  * older, surviving after last_spot ages out of that buffer. Both
  * independently nullable; confirmed both null together is the real,
- * expected state for an entity with no history at all.
+ * expected state for a newly-added entry with no history yet.
  */
 struct SpotInfo {
     bool present;
@@ -79,27 +87,23 @@ struct SpotInfo {
     char comment[64];
 };
 
-struct TargetEntry {
-    char type[8];          // "needed" or "wanted"
+struct NeededEntry {
+    char id[16];            // stable id from needed.json, e.g. "a1b2c3d4e5f6"
+    char kind[8];           // "entity" or "slot" -- derived server-side, see comment above
     char entity[48];
-    char prefix[16];       // needed only; may be empty string for a real entity
-    char band[24];         // wanted only; may hold multiple values, e.g. "17M, 15M"
-    char mode[16];         // wanted only; may be empty
-    bool has_adxo;
-    bool adxo_active;
-    char adxo_begin[16];   // raw "YYYY-MM-DD"
-    char adxo_end[16];     // raw "YYYY-MM-DD"
+    char band[24];          // slot kind only; may hold multiple values, e.g. "17M, 15M"
+    char mode[16];          // slot kind only; may be empty
     SpotInfo last_spot;
     SpotInfo last_seen;
 };
 
-struct TargetsData {
-    TargetEntry entries[MAX_TARGET_ENTRIES];
+struct NeededData {
+    NeededEntry entries[MAX_NEEDED_ENTRIES];
     int count;
     char updated[32];
 };
 
-bool dxmon_fetch_targets(TargetsData &out);
+bool dxmon_fetch_needed(NeededData &out);
 
 /**
  * Fetches and parses the current watched list. Parses into a local temporary
