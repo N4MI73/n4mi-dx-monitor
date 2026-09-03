@@ -55,6 +55,53 @@ struct PreviewStatus {
 bool dxmon_fetch_preview_status(PreviewStatus &out);
 
 /**
+ * Mirrors /api/dxmon/targets, confirmed live 2026-09-02 -- the merged
+ * Needed+Wanted feed. Needed entries carry `prefix` (may be empty for a
+ * couple of real entities, e.g. Spratly Islands); Wanted entries carry
+ * `band`/`mode`/`note` instead. `band` is sized generously (24 chars) since
+ * a real Wanted entry can hold a multi-value string like "17M, 15M", not
+ * just a single band.
+ *
+ * `last_spot` = strictly "currently in HamAlert's live recent-spots buffer
+ * right now" -- a real-time signal. `last_seen` = the persisted record of
+ * the most recent real hit ever, which may equal last_spot (just hit) or be
+ * older, surviving after last_spot ages out of that buffer. Both
+ * independently nullable; confirmed both null together is the real,
+ * expected state for an entity with no history at all.
+ */
+struct SpotInfo {
+    bool present;
+    char callsign[16];
+    char band[8];
+    char mode[16];
+    char frequency[16];
+    char received_at[32];
+    char comment[64];
+};
+
+struct TargetEntry {
+    char type[8];          // "needed" or "wanted"
+    char entity[48];
+    char prefix[16];       // needed only; may be empty string for a real entity
+    char band[24];         // wanted only; may hold multiple values, e.g. "17M, 15M"
+    char mode[16];         // wanted only; may be empty
+    bool has_adxo;
+    bool adxo_active;
+    char adxo_begin[16];   // raw "YYYY-MM-DD"
+    char adxo_end[16];     // raw "YYYY-MM-DD"
+    SpotInfo last_spot;
+    SpotInfo last_seen;
+};
+
+struct TargetsData {
+    TargetEntry entries[MAX_TARGET_ENTRIES];
+    int count;
+    char updated[32];
+};
+
+bool dxmon_fetch_targets(TargetsData &out);
+
+/**
  * Fetches and parses the current watched list. Parses into a local temporary
  * first and only commits to `out` on full success -- matches the series-wide
  * "never let a partial or malformed response corrupt existing good data"

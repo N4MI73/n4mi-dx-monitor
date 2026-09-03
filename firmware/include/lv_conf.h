@@ -49,7 +49,18 @@
 #define LV_MEM_CUSTOM 0
 #if LV_MEM_CUSTOM == 0
     /*Size of the memory available for `lv_mem_alloc()` in bytes (>= 2kB)*/
-    #define LV_MEM_SIZE (48U * 1024U)          /*[bytes]*/
+    /* Real bug found and fixed 2026-09-03: the original 48KB pool crashed
+     * (Guru Meditation, LoadProhibited -- a null LVGL object pointer used
+     * without checking) once the Needed+Wanted roster started creating
+     * ~9 LVGL objects per row x 68 real rows (~600+ objects) on top of
+     * everything else already alive across all four screens. Confirmed via
+     * real Serial crash output: the fetch/parse succeeded cleanly (already
+     * fixed separately via PSRAM for JSON parsing), and the crash only
+     * happened afterward, during UI object creation. Raised to 192KB --
+     * stays in internal RAM (LV_MEM_ADR is still 0/unused below), which
+     * should have real headroom now that JSON parsing was moved to PSRAM
+     * separately and no longer competes for the same internal heap. */
+    #define LV_MEM_SIZE (192U * 1024U)          /*[bytes]*/
 
     /*Set an address for the memory pool instead of allocating it as a normal array. Can be in external SRAM too.*/
     #define LV_MEM_ADR 0     /*0: unused*/

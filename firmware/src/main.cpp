@@ -13,6 +13,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_display_panel.hpp>
+#include <esp_heap_caps.h>
 
 #include <lvgl.h>
 #include "lvgl_v8_port.h"
@@ -252,6 +253,45 @@ struct OverviewWidgets {
 };
 static OverviewWidgets ov;
 
+/**
+ * NEEDED panel widgets -- three tiers, all built up front, toggled via
+ * LV_OBJ_FLAG_HIDDEN on each tier's own group container. See make_screen_overview()
+ * for the full layout and the 2026-09-01/2026-09-02 design/backend history.
+ */
+struct NeededWidgets {
+    lv_obj_t *status_lbl;
+    lv_obj_t *loading_lbl;
+
+    lv_obj_t *t1_group;
+    lv_obj_t *t1_type_badge;
+    lv_obj_t *t1_type_lbl;
+    lv_obj_t *t1_entity;
+    lv_obj_t *t1_subtitle;
+    lv_obj_t *t1_freq;
+    lv_obj_t *t1_mode_badge;
+    lv_obj_t *t1_mode_lbl;
+    lv_obj_t *t1_when;
+    lv_obj_t *t1_more_badge;
+    lv_obj_t *t1_more_lbl;
+
+    lv_obj_t *t2_group;
+    lv_obj_t *t2_entity;
+    lv_obj_t *t2_when;
+
+    lv_obj_t *t3_group;
+    lv_obj_t *t3_count;
+    lv_obj_t *t3_ticker;
+};
+static NeededWidgets nw;
+
+#define MAX_TICKER_NAMES     20
+#define TICKER_INTERVAL_MS   3000
+static char ticker_names[MAX_TICKER_NAMES][48];
+static int ticker_name_count = 0;
+static int ticker_index = 0;
+static uint32_t ticker_last_change_ms = 0;
+static bool needed_tier3_active = false;
+
 static lv_obj_t *make_screen_overview(void)
 {
     lv_obj_t *scr = make_screen();
@@ -327,14 +367,125 @@ static lv_obj_t *make_screen_overview(void)
     ov.watched_badge_lbl = lv_obj_get_child(ov.watched_badge, 0);
     lv_obj_add_flag(ov.watched_badge, LV_OBJ_FLAG_HIDDEN);
 
-    // --- NEEDED panel (right) -- honest placeholder, no backend exists yet ---
+    // --- NEEDED panel (right) -- real content, three-tier design agreed 2026-09-01,
+    // backend (/api/dxmon/targets, including persistent last_seen) confirmed live
+    // 2026-09-02. All three tiers' widgets are built up front and toggled via
+    // LV_OBJ_FLAG_HIDDEN on their own group container, rather than destroyed/rebuilt
+    // each refresh -- matches the stable, efficient pattern already proven for
+    // Overview's WATCHED panel.
     lv_obj_t *needed = make_panel(scr, 406, 72, 378, 316);
-    make_label(needed, "NEEDED", &lv_font_montserrat_16, COLOR_ACCENT_AMBER, 20, 24);
-    lv_obj_t *needed_msg = lv_label_create(needed);
-    lv_label_set_text(needed_msg, "Not yet built");
-    lv_obj_set_style_text_font(needed_msg, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(needed_msg, COLOR_TEXT_MUTED, 0);
-    lv_obj_center(needed_msg);
+    make_label(needed, "NEEDED", &lv_font_montserrat_16, COLOR_ACCENT_AMBER, 20, 18);
+    nw.status_lbl = lv_label_create(needed);
+    lv_label_set_text(nw.status_lbl, "-- TRACKED");
+    lv_obj_set_style_text_font(nw.status_lbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(nw.status_lbl, COLOR_BADGE_TEXT, 0);
+    lv_obj_align(nw.status_lbl, LV_ALIGN_TOP_RIGHT, -20, 20);
+    make_divider(needed, 20, 46, 338);
+
+    // Tier 1 -- something has a real live spot right now.
+    nw.t1_group = lv_obj_create(needed);
+    lv_obj_remove_style_all(nw.t1_group);
+    lv_obj_set_pos(nw.t1_group, 0, 0);
+    lv_obj_set_size(nw.t1_group, 378, 316);
+    lv_obj_clear_flag(nw.t1_group, LV_OBJ_FLAG_SCROLLABLE);
+
+    nw.t1_type_badge = lv_obj_create(nw.t1_group);
+    lv_obj_remove_style_all(nw.t1_type_badge);
+    lv_obj_set_size(nw.t1_type_badge, 70, 22);
+    lv_obj_set_pos(nw.t1_type_badge, 20, 58);
+    lv_obj_set_style_radius(nw.t1_type_badge, 6, 0);
+    lv_obj_set_style_border_width(nw.t1_type_badge, 1, 0);
+    nw.t1_type_lbl = lv_label_create(nw.t1_type_badge);
+    lv_obj_set_style_text_font(nw.t1_type_lbl, &lv_font_montserrat_12, 0);
+    lv_obj_center(nw.t1_type_lbl);
+
+    nw.t1_entity = lv_label_create(nw.t1_group);
+    lv_label_set_text(nw.t1_entity, "--");
+    lv_obj_set_style_text_font(nw.t1_entity, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(nw.t1_entity, COLOR_TEXT_PRIMARY, 0);
+    lv_label_set_long_mode(nw.t1_entity, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(nw.t1_entity, 338);
+    lv_obj_set_pos(nw.t1_entity, 20, 88);
+
+    nw.t1_subtitle = lv_label_create(nw.t1_group);
+    lv_label_set_text(nw.t1_subtitle, "");
+    lv_obj_set_style_text_font(nw.t1_subtitle, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(nw.t1_subtitle, COLOR_TEXT_SECOND, 0);
+    lv_obj_set_pos(nw.t1_subtitle, 20, 110);
+
+    make_divider(nw.t1_group, 20, 138, 338);
+
+    make_label(nw.t1_group, "FREQUENCY", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 20, 150);
+    nw.t1_freq = make_label(nw.t1_group, "--", &lv_font_montserrat_16, COLOR_TEXT_PRIMARY, 20, 168);
+
+    make_label(nw.t1_group, "MODE", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 164, 150);
+    nw.t1_mode_badge = lv_obj_create(nw.t1_group);
+    lv_obj_remove_style_all(nw.t1_mode_badge);
+    lv_obj_set_size(nw.t1_mode_badge, 56, 24);
+    lv_obj_set_pos(nw.t1_mode_badge, 164, 168);
+    lv_obj_set_style_bg_color(nw.t1_mode_badge, COLOR_BADGE_BLUE_BG, 0);
+    lv_obj_set_style_bg_opa(nw.t1_mode_badge, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(nw.t1_mode_badge, COLOR_ACCENT_BLUE, 0);
+    lv_obj_set_style_border_width(nw.t1_mode_badge, 1, 0);
+    lv_obj_set_style_radius(nw.t1_mode_badge, 6, 0);
+    nw.t1_mode_lbl = lv_label_create(nw.t1_mode_badge);
+    lv_label_set_text(nw.t1_mode_lbl, "--");
+    lv_obj_set_style_text_font(nw.t1_mode_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(nw.t1_mode_lbl, COLOR_BADGE_BLUE_TX, 0);
+    lv_obj_center(nw.t1_mode_lbl);
+
+    make_label(nw.t1_group, "LAST SPOT", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 254, 150);
+    nw.t1_when = make_label(nw.t1_group, "--", &lv_font_montserrat_16, COLOR_TEXT_PRIMARY, 254, 168);
+
+    nw.t1_more_badge = make_pill_badge(nw.t1_group, "", 20, 210);
+    nw.t1_more_lbl = lv_obj_get_child(nw.t1_more_badge, 0);
+    lv_obj_add_flag(nw.t1_more_badge, LV_OBJ_FLAG_HIDDEN);
+
+    // Real bug found and fixed 2026-09-03: t1_group was never hidden by default, so
+    // before the first successful fetch it showed raw, un-set-up LVGL default widget
+    // content (literally the word "Text", "--" everywhere) -- confirmed directly from
+    // a real hardware video. Hidden here now, same as t2/t3 already were, with a
+    // proper loading group taking its place until real data arrives.
+    lv_obj_add_flag(nw.t1_group, LV_OBJ_FLAG_HIDDEN);
+
+    // Tier 2 -- no live spot anywhere, but real history exists.
+    nw.t2_group = lv_obj_create(needed);
+    lv_obj_remove_style_all(nw.t2_group);
+    lv_obj_set_pos(nw.t2_group, 0, 0);
+    lv_obj_set_size(nw.t2_group, 378, 316);
+    lv_obj_clear_flag(nw.t2_group, LV_OBJ_FLAG_SCROLLABLE);
+
+    make_label(nw.t2_group, "LAST HIT", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 20, 110);
+    nw.t2_entity = lv_label_create(nw.t2_group);
+    lv_label_set_text(nw.t2_entity, "--");
+    lv_obj_set_style_text_font(nw.t2_entity, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(nw.t2_entity, COLOR_TEXT_PRIMARY, 0);
+    lv_label_set_long_mode(nw.t2_entity, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(nw.t2_entity, 338);
+    lv_obj_set_pos(nw.t2_entity, 20, 130);
+    nw.t2_when = make_label(nw.t2_group, "--", &lv_font_montserrat_14, COLOR_TEXT_SECOND, 20, 156);
+    lv_obj_add_flag(nw.t2_group, LV_OBJ_FLAG_HIDDEN);
+
+    // Tier 3 -- cold start, nothing's ever hit. Count anchor + rotating ticker, per
+    // Dan's own reaction 2026-09-01: "that will keep it interesting."
+    nw.t3_group = lv_obj_create(needed);
+    lv_obj_remove_style_all(nw.t3_group);
+    lv_obj_set_pos(nw.t3_group, 0, 0);
+    lv_obj_set_size(nw.t3_group, 378, 316);
+    lv_obj_clear_flag(nw.t3_group, LV_OBJ_FLAG_SCROLLABLE);
+
+    nw.t3_count = make_label(nw.t3_group, "--", &lv_font_montserrat_16, COLOR_TEXT_PRIMARY, 20, 118);
+    nw.t3_ticker = make_label(nw.t3_group, "", &lv_font_montserrat_14, COLOR_TEXT_MUTED, 20, 144);
+    lv_obj_add_flag(nw.t3_group, LV_OBJ_FLAG_HIDDEN);
+
+    // Default loading state -- visible until the first real update_overview_needed()
+    // call, mirroring the WATCHED panel's own honest "Waiting for first fetch..."
+    // pre-fetch treatment rather than showing nothing (or raw default widgets).
+    nw.loading_lbl = lv_label_create(needed);
+    lv_label_set_text(nw.loading_lbl, "Waiting for first fetch...");
+    lv_obj_set_style_text_font(nw.loading_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(nw.loading_lbl, COLOR_TEXT_MUTED, 0);
+    lv_obj_set_pos(nw.loading_lbl, 20, 88);
 
     return scr;
 }
@@ -439,6 +590,157 @@ static void update_wifi_glyph(void)
 {
     bool connected = (WiFi.status() == WL_CONNECTED);
     lv_obj_set_style_text_color(ov.wifi_glyph, connected ? COLOR_STATUS_GREEN : COLOR_DOT_GRAY, 0);
+}
+
+// ---------------------------------------------------------------------------
+// NEEDED panel (Overview) -- three-tier display over the merged Needed+Wanted
+// targets feed. Tier chosen fresh on every fetch:
+//   1. Something has a real live spot right now (last_spot present on any entry)
+//      -> feature it, mirroring Watched's own tier-1 treatment.
+//   2. Nothing live, but at least one entry has persisted last_seen data
+//      -> "Last hit: <date> -- <entity>".
+//   3. Nothing has ever hit -> a tracked-count anchor line + a slow rotating
+//      ticker through real tracked entity names, so a quiet feature never
+//      looks broken. See the 2026-09-01 design discussion and the 2026-09-02
+//      backend work (persistent last_seen) that made Tier 2 possible at all.
+// ---------------------------------------------------------------------------
+
+static int select_featured_target(const TargetsData &data, bool want_live)
+{
+    int best = -1;
+    for (int i = 0; i < data.count; i++) {
+        const SpotInfo &spot = want_live ? data.entries[i].last_spot : data.entries[i].last_seen;
+        if (!spot.present) continue;
+        if (best == -1 || strcmp(spot.received_at, (want_live ? data.entries[best].last_spot : data.entries[best].last_seen).received_at) > 0) {
+            best = i;
+        }
+    }
+    return best;
+}
+
+static void populate_ticker(const TargetsData &data)
+{
+    ticker_name_count = 0;
+    for (int i = 0; i < data.count && ticker_name_count < MAX_TICKER_NAMES; i++) {
+        strncpy(ticker_names[ticker_name_count], data.entries[i].entity, sizeof(ticker_names[0]) - 1);
+        ticker_names[ticker_name_count][sizeof(ticker_names[0]) - 1] = '\0';
+        ticker_name_count++;
+    }
+    ticker_index = 0;
+    ticker_last_change_ms = millis();
+    if (ticker_name_count > 0) {
+        lv_label_set_text(nw.t3_ticker, ticker_names[0]);
+    } else {
+        lv_label_set_text(nw.t3_ticker, "");
+    }
+}
+
+/** Called every loop() iteration; only actually updates when Tier 3 is showing and the
+ * interval has elapsed -- cheap check otherwise. */
+static void advance_ticker_if_needed(void)
+{
+    if (!needed_tier3_active || ticker_name_count == 0) return;
+    if (millis() - ticker_last_change_ms < TICKER_INTERVAL_MS) return;
+    ticker_index = (ticker_index + 1) % ticker_name_count;
+    lv_label_set_text(nw.t3_ticker, ticker_names[ticker_index]);
+    ticker_last_change_ms = millis();
+}
+
+static void update_overview_needed(const TargetsData &data)
+{
+    lv_obj_add_flag(nw.loading_lbl, LV_OBJ_FLAG_HIDDEN);
+
+    int needed_count = 0, wanted_count = 0;
+    for (int i = 0; i < data.count; i++) {
+        if (strcmp(data.entries[i].type, "wanted") == 0) wanted_count++;
+        else needed_count++;
+    }
+    char status_buf[24];
+    snprintf(status_buf, sizeof(status_buf), "%d TRACKED", data.count);
+    lv_label_set_text(nw.status_lbl, status_buf);
+
+    int live_idx = select_featured_target(data, true);
+
+    if (live_idx != -1) {
+        needed_tier3_active = false;
+        lv_obj_clear_flag(nw.t1_group, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(nw.t2_group, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(nw.t3_group, LV_OBJ_FLAG_HIDDEN);
+
+        const TargetEntry &t = data.entries[live_idx];
+        bool is_wanted = (strcmp(t.type, "wanted") == 0);
+
+        lv_label_set_text(nw.t1_type_lbl, is_wanted ? "WANTED" : "NEEDED");
+        lv_obj_set_style_bg_color(nw.t1_type_badge, is_wanted ? COLOR_BADGE_BLUE_BG : lv_color_hex(0x332a10), 0);
+        lv_obj_set_style_bg_opa(nw.t1_type_badge, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(nw.t1_type_badge, is_wanted ? COLOR_ACCENT_BLUE : COLOR_ACCENT_AMBER, 0);
+        lv_obj_set_style_text_color(nw.t1_type_lbl, is_wanted ? COLOR_BADGE_BLUE_TX : COLOR_ACCENT_AMBER, 0);
+
+        lv_label_set_text(nw.t1_entity, t.entity);
+
+        if (is_wanted) {
+            char sub_buf[48];
+            snprintf(sub_buf, sizeof(sub_buf), "%s%s%s", t.band, (t.band[0] && t.mode[0]) ? " " : "", t.mode);
+            lv_label_set_text(nw.t1_subtitle, sub_buf);
+        } else {
+            char sub_buf[24];
+            snprintf(sub_buf, sizeof(sub_buf), "%s", t.prefix[0] ? t.prefix : "");
+            lv_label_set_text(nw.t1_subtitle, sub_buf);
+        }
+
+        char freq_buf[24];
+        snprintf(freq_buf, sizeof(freq_buf), "%s MHz", t.last_spot.frequency);
+        lv_label_set_text(nw.t1_freq, freq_buf);
+
+        char mode_buf[16];
+        strncpy(mode_buf, t.last_spot.mode, sizeof(mode_buf) - 1);
+        mode_buf[sizeof(mode_buf) - 1] = '\0';
+        to_upper_inplace(mode_buf);
+        lv_label_set_text(nw.t1_mode_lbl, mode_buf);
+
+        char when_buf[24];
+        format_short_datetime(t.last_spot.received_at, when_buf, sizeof(when_buf));
+        lv_label_set_text(nw.t1_when, when_buf);
+
+        int more = data.count - 1;
+        if (more > 0) {
+            char more_buf[32];
+            snprintf(more_buf, sizeof(more_buf), "+%d more tracked", more);
+            lv_label_set_text(nw.t1_more_lbl, more_buf);
+            lv_obj_clear_flag(nw.t1_more_badge, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(nw.t1_more_badge, LV_OBJ_FLAG_HIDDEN);
+        }
+        return;
+    }
+
+    int seen_idx = select_featured_target(data, false);
+    if (seen_idx != -1) {
+        needed_tier3_active = false;
+        lv_obj_add_flag(nw.t1_group, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(nw.t2_group, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(nw.t3_group, LV_OBJ_FLAG_HIDDEN);
+
+        const TargetEntry &t = data.entries[seen_idx];
+        lv_label_set_text(nw.t2_entity, t.entity);
+        char when_buf[24];
+        char line_buf[40];
+        format_short_datetime(t.last_seen.received_at, when_buf, sizeof(when_buf));
+        snprintf(line_buf, sizeof(line_buf), "Last hit: %s", when_buf);
+        lv_label_set_text(nw.t2_when, line_buf);
+        return;
+    }
+
+    // Tier 3 -- cold start.
+    lv_obj_add_flag(nw.t1_group, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(nw.t2_group, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(nw.t3_group, LV_OBJ_FLAG_HIDDEN);
+
+    char count_buf[40];
+    snprintf(count_buf, sizeof(count_buf), "%d needed - %d wanted tracked", needed_count, wanted_count);
+    lv_label_set_text(nw.t3_count, count_buf);
+    populate_ticker(data);
+    needed_tier3_active = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -885,9 +1187,194 @@ static lv_obj_t *make_screen_watched(void)
     return scr;
 }
 
+// ---------------------------------------------------------------------------
+// Needed+Wanted roster (tab bar destination) -- full scrollable list over
+// /api/dxmon/targets. Reuses Watched roster's proven row-card pattern
+// (make_row_card, LV_DIR_VER touch-scroll) and format_starts_in()'s
+// day-count math, extended with a type badge and the real states this
+// merged feed actually produces.
+// ---------------------------------------------------------------------------
+
+static lv_obj_t *needed_roster_container = NULL;
+static lv_obj_t *needed_tab_status_lbl = NULL;
+
+static void make_target_row(lv_obj_t *container, int index, const TargetEntry &t, const char *now_iso)
+{
+    int y = index * 84;
+    bool is_wanted = (strcmp(t.type, "wanted") == 0);
+    bool live = t.last_spot.present;
+    bool seen = !live && t.last_seen.present;
+    bool adxo_active_waiting = !live && !seen && t.has_adxo && t.adxo_active;
+    bool adxo_upcoming = !live && !seen && t.has_adxo && !t.adxo_active;
+    // else: cold, never seen, no ADXO link -- the common case for most Needed entities.
+
+    lv_obj_t *card = make_row_card(container, y, !live);
+
+    lv_color_t dot_color = live ? COLOR_STATUS_GREEN : (seen ? COLOR_ACCENT_AMBER : COLOR_DOT_GRAY);
+    lv_obj_t *dot = lv_obj_create(card);
+    lv_obj_remove_style_all(dot);
+    lv_obj_set_size(dot, 10, 10);
+    lv_obj_set_style_radius(dot, 5, 0);
+    lv_obj_set_style_bg_color(dot, dot_color, 0);
+    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+    lv_obj_set_pos(dot, 20, 33);
+
+    // Type badge -- Dan's explicit request 2026-08-25: visually distinguish Needed vs.
+    // Wanted entries. Amber for Needed (matches the panel's own established identity
+    // color), blue for Wanted (matches Watched's identity, since Wanted originated as
+    // a more specifically-curated, Watched-like target).
+    lv_obj_t *type_badge = lv_obj_create(card);
+    lv_obj_remove_style_all(type_badge);
+    lv_obj_set_size(type_badge, 62, 20);
+    lv_obj_set_pos(type_badge, 36, 10);
+    lv_obj_set_style_radius(type_badge, 5, 0);
+    lv_obj_set_style_border_width(type_badge, 1, 0);
+    lv_obj_set_style_bg_color(type_badge, is_wanted ? COLOR_BADGE_BLUE_BG : lv_color_hex(0x332a10), 0);
+    lv_obj_set_style_bg_opa(type_badge, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(type_badge, is_wanted ? COLOR_ACCENT_BLUE : COLOR_ACCENT_AMBER, 0);
+    lv_obj_t *type_lbl = lv_label_create(type_badge);
+    lv_label_set_text(type_lbl, is_wanted ? "WANTED" : "NEEDED");
+    lv_obj_set_style_text_font(type_lbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(type_lbl, is_wanted ? COLOR_BADGE_BLUE_TX : COLOR_ACCENT_AMBER, 0);
+    lv_obj_center(type_lbl);
+
+    lv_color_t text_primary = live ? COLOR_TEXT_PRIMARY : COLOR_TEXT_SECOND;
+    lv_obj_t *entity_lbl = lv_label_create(card);
+    lv_label_set_text(entity_lbl, t.entity);
+    lv_obj_set_style_text_font(entity_lbl, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(entity_lbl, text_primary, 0);
+    lv_label_set_long_mode(entity_lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(entity_lbl, 360);
+    lv_obj_set_pos(entity_lbl, 36, 34);
+
+    // Subtitle: band/mode for Wanted, prefix for Needed (when present -- a couple of
+    // real entities, e.g. Spratly Islands, have an empty prefix).
+    char sub_buf[32];
+    if (is_wanted) {
+        snprintf(sub_buf, sizeof(sub_buf), "%s%s%s", t.band, (t.band[0] && t.mode[0]) ? " " : "", t.mode);
+    } else {
+        snprintf(sub_buf, sizeof(sub_buf), "%s", t.prefix);
+    }
+    make_label(card, sub_buf, &lv_font_montserrat_12, COLOR_TEXT_MUTED, 36, 56);
+
+    if (live || seen) {
+        const SpotInfo &spot = live ? t.last_spot : t.last_seen;
+
+        lv_obj_t *mode_badge = lv_obj_create(card);
+        lv_obj_remove_style_all(mode_badge);
+        lv_obj_set_size(mode_badge, 56, 24);
+        lv_obj_set_pos(mode_badge, 574, 16);
+        lv_obj_set_style_bg_color(mode_badge, COLOR_BADGE_BLUE_BG, 0);
+        lv_obj_set_style_bg_opa(mode_badge, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(mode_badge, COLOR_ACCENT_BLUE, 0);
+        lv_obj_set_style_border_width(mode_badge, 1, 0);
+        lv_obj_set_style_radius(mode_badge, 6, 0);
+        char mode_buf[16];
+        strncpy(mode_buf, spot.mode, sizeof(mode_buf) - 1);
+        mode_buf[sizeof(mode_buf) - 1] = '\0';
+        to_upper_inplace(mode_buf);
+        lv_obj_t *mode_lbl = lv_label_create(mode_badge);
+        lv_label_set_text(mode_lbl, mode_buf);
+        lv_obj_set_style_text_font(mode_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(mode_lbl, COLOR_BADGE_BLUE_TX, 0);
+        lv_obj_center(mode_lbl);
+
+        char freq_buf[24];
+        snprintf(freq_buf, sizeof(freq_buf), "%s MHz", spot.frequency);
+        make_label(card, freq_buf, &lv_font_montserrat_16, COLOR_TEXT_PRIMARY, 640, 20);
+
+        char when_buf[24];
+        format_short_datetime(spot.received_at, when_buf, sizeof(when_buf));
+        lv_obj_t *when_lbl = lv_label_create(card);
+        // "Last hit" prefix distinguishes Tier 2 (persisted, possibly old) from a
+        // genuinely live Tier 1 row at a glance, without needing a second badge.
+        char when_prefixed[32];
+        snprintf(when_prefixed, sizeof(when_prefixed), "%s%s", live ? "" : "Last hit: ", when_buf);
+        lv_label_set_text(when_lbl, when_prefixed);
+        lv_obj_set_style_text_font(when_lbl, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(when_lbl, COLOR_TEXT_MUTED, 0);
+        lv_obj_align(when_lbl, LV_ALIGN_TOP_RIGHT, -20, 50);
+    } else if (adxo_upcoming) {
+        lv_obj_t *pill = lv_obj_create(card);
+        lv_obj_remove_style_all(pill);
+        lv_obj_set_size(pill, 176, 42);
+        lv_obj_set_pos(pill, 564, 17);
+        lv_obj_set_style_bg_color(pill, COLOR_BADGE_BG, 0);
+        lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(pill, 13, 0);
+
+        char relative_buf[24];
+        char date_buf[16];
+        format_starts_in(t.adxo_begin, now_iso, relative_buf, sizeof(relative_buf), date_buf, sizeof(date_buf));
+
+        lv_obj_t *rel_lbl = lv_label_create(pill);
+        lv_label_set_text(rel_lbl, relative_buf);
+        lv_obj_set_style_text_font(rel_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(rel_lbl, COLOR_BADGE_TEXT, 0);
+        lv_obj_align(rel_lbl, LV_ALIGN_TOP_MID, 0, 5);
+
+        char date_line[24];
+        snprintf(date_line, sizeof(date_line), "(%s)", date_buf);
+        lv_obj_t *date_lbl = lv_label_create(pill);
+        lv_label_set_text(date_lbl, date_line);
+        lv_obj_set_style_text_font(date_lbl, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(date_lbl, COLOR_TEXT_MUTED, 0);
+        lv_obj_align(date_lbl, LV_ALIGN_TOP_MID, 0, 23);
+    } else if (adxo_active_waiting) {
+        lv_obj_t *lbl = lv_label_create(card);
+        lv_label_set_text(lbl, "Awaiting first spot");
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl, COLOR_TEXT_MUTED, 0);
+        lv_obj_align(lbl, LV_ALIGN_RIGHT_MID, -20, 0);
+    } else {
+        lv_obj_t *lbl = lv_label_create(card);
+        lv_label_set_text(lbl, "Never spotted");
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl, COLOR_TEXT_MUTED, 0);
+        lv_obj_align(lbl, LV_ALIGN_RIGHT_MID, -20, 0);
+    }
+}
+
+static void update_needed_roster(const TargetsData &data)
+{
+    if (!needed_roster_container) return;
+    lv_obj_clean(needed_roster_container);
+    for (int i = 0; i < data.count; i++) {
+        make_target_row(needed_roster_container, i, data.entries[i], data.updated);
+    }
+
+    if (needed_tab_status_lbl) {
+        char count_buf[24];
+        snprintf(count_buf, sizeof(count_buf), "%d TRACKED", data.count);
+        lv_label_set_text(needed_tab_status_lbl, count_buf);
+    }
+}
+
+static lv_obj_t *make_screen_needed(void)
+{
+    lv_obj_t *scr = make_screen();
+    needed_tab_status_lbl = create_header(scr, "NEEDED", "0 TRACKED");
+
+    needed_roster_container = lv_obj_create(scr);
+    lv_obj_remove_style_all(needed_roster_container);
+    lv_obj_set_pos(needed_roster_container, 16, 70);
+    lv_obj_set_size(needed_roster_container, 760, 344);
+    lv_obj_set_style_bg_opa(needed_roster_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_scroll_dir(needed_roster_container, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(needed_roster_container, LV_SCROLLBAR_MODE_AUTO);
+
+    return scr;
+}
+
 static void do_full_refresh(void)
 {
-    WatchedData data;
+    // Both structs are `static`, not stack-local, deliberately -- TargetsData in
+    // particular is roughly 38-40KB at MAX_TARGET_ENTRIES=80 (each entry carries two
+    // full SpotInfo structs), which badly overflows the ESP32's default ~8KB task
+    // stack if declared as a local variable here. Real bug found and fixed 2026-09-02
+    // after real hardware showed corrupted, flickering screen content -- a classic
+    // stack-overflow symptom, not a mysterious glitch.
+    static WatchedData data;
     if (dxmon_fetch_watched(data)) {
         Serial.printf("Watched refresh OK, %d entr%s\n", data.count, data.count == 1 ? "y" : "ies");
         lvgl_port_lock(-1);
@@ -896,6 +1383,30 @@ static void do_full_refresh(void)
         lvgl_port_unlock();
     } else {
         Serial.println("Watched refresh failed -- keeping last known-good data");
+    }
+
+    // PSRAM-backed, not `static` in internal DRAM -- real link-time bug found and
+    // fixed 2026-09-03: combining this ~40KB struct as internal-DRAM `static` with
+    // the LVGL pool increase (see lv_conf.h) overflowed the ESP32-S3's internal SRAM
+    // budget by ~35KB at link time. TargetsData is only touched once per ~60s fetch,
+    // so PSRAM's slightly slower access is irrelevant here -- unlike, say, a display
+    // frame buffer touched every frame. Allocated once, lazily, on first use (not at
+    // global/static-init time, since PSRAM isn't ready that early).
+    static TargetsData *targets = nullptr;
+    if (!targets) {
+        targets = (TargetsData *)heap_caps_malloc(sizeof(TargetsData), MALLOC_CAP_SPIRAM);
+        if (!targets) {
+            Serial.println("do_full_refresh: PSRAM allocation for TargetsData failed");
+        }
+    }
+    if (targets && dxmon_fetch_targets(*targets)) {
+        Serial.printf("Targets refresh OK, %d entr%s\n", targets->count, targets->count == 1 ? "y" : "ies");
+        lvgl_port_lock(-1);
+        update_overview_needed(*targets);
+        update_needed_roster(*targets);
+        lvgl_port_unlock();
+    } else {
+        Serial.println("Targets refresh failed -- keeping last known-good data");
     }
 
     PreviewStatus ps;
@@ -937,7 +1448,7 @@ void setup()
 
     screens[0] = make_screen_overview();
     screens[1] = make_screen_watched();
-    screens[2] = make_screen_placeholder("NEEDED", "0 REMAINING");
+    screens[2] = make_screen_needed();
     screens[3] = make_screen_config();
 
     for (int i = 0; i < 4; i++) {
@@ -988,6 +1499,7 @@ void loop()
     lvgl_port_lock(-1);
     update_wifi_glyph();
     update_config_wifi();
+    advance_ticker_if_needed();
     lvgl_port_unlock();
 
     delay(200);
