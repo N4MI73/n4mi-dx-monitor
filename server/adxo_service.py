@@ -64,13 +64,24 @@ USER_AGENT = "N4MI-DXMon/1.0 (+https://github.com/N4MI73/n4mi-dx-monitor; contac
 # otherwise every container rebuild silently wipes the watchlist.
 WATCHED_FILE = os.environ.get("WATCHED_FILE", "/app/data/watched.json")
 
-# Wanted -- Dan's small, manually-curated list of specific entity+band+mode gaps on
-# already-confirmed entities. Deliberately NOT sourced from HamAlert's own "Band slots"
-# condition, which draws from Club Log's automated missing-slot data -- that inherits
-# the same worked-vs-LoTW-confirmed precision gap already documented for the Needed-
-# entity feature ("0-slots mystery", 2026-08-16). Wanted stays fully Dan-curated for
-# the same reason Needed's entity list is sourced from his own LoTW export.
-WANTED_FILE = os.environ.get("WANTED_FILE", "/app/data/wanted.json")
+# Needed -- Dan's small, manually-curated list of DX targets: either a whole
+# never-confirmed entity (band/mode both blank) or a specific band/mode gap on an
+# entity he's already confirmed (band and/or mode set). Unified 2026-09-04 -- this
+# used to be split between a CSV-auto-populated "Needed" (all of no_confirms.csv)
+# and a separately-curated "Wanted" (band/mode gaps only); in practice the auto-
+# populated side wasn't useful (~68 entries, mostly permanently empty), so both
+# collapsed into one curated list matching exactly what Dan sets up HamAlert
+# triggers for. Deliberately NOT sourced from HamAlert's own "Band slots" condition,
+# which draws from Club Log's automated missing-slot data -- that inherits the same
+# worked-vs-LoTW-confirmed precision gap already documented for the old Needed-entity
+# feature ("0-slots mystery", 2026-08-16). Stays fully Dan-curated for the same
+# reason no_confirms.csv itself is sourced from his own LoTW export, not an API.
+#
+# File renamed from WANTED_FILE/wanted.json (2026-09-04). On startup, if NEEDED_FILE
+# doesn't exist yet but the old wanted.json does, _load_needed() migrates it
+# automatically -- see that function for details. No manual file operation needed.
+NEEDED_FILE = os.environ.get("NEEDED_FILE", "/app/data/needed.json")
+_LEGACY_WANTED_FILE = os.environ.get("WANTED_FILE", "/app/data/wanted.json")
 
 # Trigger Builder -- never-confirmed entity seed list. A static file Dan replaces
 # manually whenever he re-exports from his LoTW DXCC Credit Analyzer (no live sync --
@@ -471,55 +482,99 @@ def _remove_watched(watched_id):
 
 
 # --------------------------------------------------------------------------------------
-# Wanted list -- Dan's small, manually-curated entity+band+mode gaps. Mirrors the
-# Watched list's structure exactly (own file, own lock, same load/save/add/remove
-# pattern) -- deliberately not merged into the Watched data model, since the matching
-# key is fundamentally different (entity+band+mode, not a callsign).
+# Needed list -- Dan's small, manually-curated DX target list. Unified 2026-09-04 from
+# the former separate Needed (auto-populated from no_confirms.csv) and Wanted (band/mode
+# gaps only) -- see NEEDED_FILE's module-level comment. Mirrors the Watched list's
+# structure exactly (own file, own lock, same load/save/add/remove pattern) --
+# deliberately not merged into the Watched data model, since the matching key is
+# fundamentally different (entity name +/- band/mode, not a callsign).
+#
+# Entry shape: {id, entity, band, mode, note, added}. band and mode are each
+# independently optional -- BOTH blank means "whole entity, any band/mode" (the old
+# Needed semantic); either set means "this specific slot" (the old Wanted semantic).
+# There is no stored type/category field -- see _needed_entry_kind() below, which
+# derives ENTITY vs. SLOT from whether band/mode are present, so there's only ever
+# one source of truth for an entry's kind.
 # --------------------------------------------------------------------------------------
 
-_wanted_lock = threading.Lock()
-_wanted = []  # list of dicts, loaded from WANTED_FILE at startup
+_needed_lock = threading.Lock()
+_needed = []  # list of dicts, loaded from NEEDED_FILE at startup
 
 
-def _load_wanted():
-    global _wanted
+def _load_needed():
+    """Loads NEEDED_FILE. If it doesn't exist yet but the old WANTED_FILE does
+    (pre-2026-09-04 deployment), migrates it automatically: loads the old file,
+    writes it out as the new one, and continues -- no manual rename step needed on
+    deploy. This is a one-time migration; once needed.json exists, wanted.json is
+    never consulted again."""
+    global _needed
     try:
-        with open(WANTED_FILE, "r", encoding="utf-8") as f:
+        with open(NEEDED_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, list):
-            _wanted = data
-            log.info("Loaded %d wanted entries from %s", len(_wanted), WANTED_FILE)
+            _needed = data
+            log.info("Loaded %d needed entries from %s", len(_needed), NEEDED_FILE)
         else:
-            log.error("Wanted file did not contain a list -- starting empty, not overwriting")
+            log.error("Needed file did not contain a list -- starting empty, not overwriting")
+        return
     except FileNotFoundError:
-        log.info("No existing wanted file at %s -- starting empty", WANTED_FILE)
+        pass  # fall through to migration check below
     except (json.JSONDecodeError, OSError) as exc:
-        log.error("Failed to load wanted file (%s) -- starting empty in memory, "
-                   "NOT overwriting the file on disk: %s", WANTED_FILE, exc)
-        _wanted = []
+        log.error("Failed to load needed file (%s) -- starting empty in memory, "
+                   "NOT overwriting the file on disk: %s", NEEDED_FILE, exc)
+        _needed = []
+        return
+
+    # NEEDED_FILE doesn't exist -- check for the pre-rename wanted.json and migrate
+    # it forward if found, so Dan's two real existing entries (Sierra Leone,
+    # Singapore) and their live HamAlert triggers keep working across the rename
+    # with zero manual steps.
+    try:
+        with open(_LEGACY_WANTED_FILE, "r", encoding="utf-8") as f:
+            legacy_data = json.load(f)
+        if isinstance(legacy_data, list):
+            _needed = legacy_data
+            _save_needed()
+            log.info("Migrated %d entries from legacy %s to %s",
+                      len(_needed), _LEGACY_WANTED_FILE, NEEDED_FILE)
+        else:
+            log.error("Legacy wanted file did not contain a list -- starting empty")
+    except FileNotFoundError:
+        log.info("No existing needed file at %s (and no legacy wanted file to migrate) "
+                  "-- starting empty", NEEDED_FILE)
+    except (json.JSONDecodeError, OSError) as exc:
+        log.error("Failed to read legacy wanted file (%s) -- starting empty in memory: %s",
+                   _LEGACY_WANTED_FILE, exc)
+        _needed = []
 
 
-def _save_wanted():
+def _save_needed():
     """Atomic write -- same pattern as _save_watched()."""
-    os.makedirs(os.path.dirname(WANTED_FILE), exist_ok=True)
-    tmp_path = WANTED_FILE + ".tmp"
+    os.makedirs(os.path.dirname(NEEDED_FILE), exist_ok=True)
+    tmp_path = NEEDED_FILE + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(_wanted, f, indent=2)
-    os.replace(tmp_path, WANTED_FILE)
+        json.dump(_needed, f, indent=2)
+    os.replace(tmp_path, NEEDED_FILE)
 
 
-def _add_wanted(entity, band, mode, note=""):
-    """Entity is always required. Band and mode are each individually optional, but
-    at least one of the two must be given -- Dan's clarification 2026-08-25: he's
-    more often chasing a specific band OR mode gap than both at once, but an entity
-    with neither specified is just a plain Needed entity, not a real Wanted target."""
+def _needed_entry_kind(entry):
+    """Derived, not stored -- see the module comment above. Returns 'entity' when
+    band and mode are both blank (whole-entity target), 'slot' otherwise."""
+    if (entry.get("band") or "").strip() or (entry.get("mode") or "").strip():
+        return "slot"
+    return "entity"
+
+
+def _add_needed(entity, band, mode, note=""):
+    """Entity is always required. Band and mode are each independently optional and
+    may now BOTH be blank (2026-09-04 -- represents a whole never-confirmed entity,
+    the old Needed semantic). Previously at least one of band/mode was required
+    (Wanted-only); that constraint is relaxed now that this list covers both cases."""
     entity = (entity or "").strip()
     band = (band or "").strip()
     mode = (mode or "").strip()
     if not entity:
         return None, "Entity is required."
-    if not band and not mode:
-        return None, "At least one of band or mode is required."
 
     entry = {
         "id": uuid.uuid4().hex[:12],
@@ -529,19 +584,19 @@ def _add_wanted(entity, band, mode, note=""):
         "note": (note or "").strip(),
         "added": datetime.now(EASTERN).isoformat(),
     }
-    with _wanted_lock:
-        _wanted.append(entry)
-        _save_wanted()
+    with _needed_lock:
+        _needed.append(entry)
+        _save_needed()
     return entry, None
 
 
-def _remove_wanted(wanted_id):
-    with _wanted_lock:
-        before = len(_wanted)
-        _wanted[:] = [w for w in _wanted if w["id"] != wanted_id]
-        removed = len(_wanted) != before
+def _remove_needed(needed_id):
+    with _needed_lock:
+        before = len(_needed)
+        _needed[:] = [w for w in _needed if w["id"] != needed_id]
+        removed = len(_needed) != before
         if removed:
-            _save_wanted()
+            _save_needed()
     return removed
 
 
@@ -643,27 +698,29 @@ def _build_trigger_recipes(callsigns, entities):
     return recipes
 
 
-def _build_wanted_trigger_recipe(entity, band, mode):
-    """Single recipe for one Wanted entry. Confirmed 2026-08-25 (screenshot) that
-    HamAlert's own trigger editor supports combining DXCC, Band, and Mode conditions
-    together in one trigger. Uses a `conditions` list rather than the single
-    condition_label/condition_value shape _build_trigger_recipes uses -- kept as a
-    separate, additive format so the already-tested Watched/Needed recipe path isn't
-    touched. No splitting logic needed: even the broadest Wanted case (entity + one
-    of band/mode) is about as narrow as a HamAlert trigger gets, almost certainly
-    lower volume than even a single watched callsign.
+def _build_needed_trigger_recipe(entity, band, mode):
+    """Single recipe for one Needed entry (unified 2026-09-04 -- covers both the old
+    Needed and old Wanted cases). Confirmed 2026-08-25 (screenshot) that HamAlert's
+    own trigger editor supports combining DXCC, Band, and Mode conditions together in
+    one trigger. Uses a `conditions` list rather than the single condition_label/
+    condition_value shape _build_trigger_recipes uses -- kept as a separate, additive
+    format so the already-tested Watched general-picker recipe path isn't touched.
 
-    Band and mode are each independently optional (Dan's clarification 2026-08-25 --
-    he's more often chasing a specific band OR mode gap than both at once), but at
-    least one of the two must be present, mirroring _add_wanted's own validation.
+    Band and mode are each independently optional and may both be blank -- a
+    whole-entity target (e.g. a never-confirmed DXCC, any band/mode) generates a
+    DXCC-only condition; a slot target (band and/or mode set) adds those as
+    additional conditions, same as before. No splitting logic needed either way:
+    even the broadest case here (one entity, any band/mode) is one Dan already
+    scopes narrowly himself when he pastes it into HamAlert, same discipline as his
+    existing Watched triggers.
 
     Deliberately does NOT use HamAlert's own \"Band slots\" condition (which draws from
-    Club Log's automated missing-slot data) -- see WANTED_FILE's module-level comment
-    for why Wanted stays fully Dan-curated instead."""
+    Club Log's automated missing-slot data) -- see NEEDED_FILE's module-level comment
+    for why this list stays fully Dan-curated instead."""
     entity = (entity or "").strip()
     band = (band or "").strip()
     mode = (mode or "").strip()
-    if not entity or (not band and not mode):
+    if not entity:
         return None
 
     conditions = [{"label": "DXCC is", "value": entity}]
@@ -675,7 +732,7 @@ def _build_wanted_trigger_recipe(entity, band, mode):
     title_parts = [entity] + [p for p in (band, mode) if p]
 
     return {
-        "title": f"Wanted: {' '.join(title_parts)}",
+        "title": f"Needed: {' '.join(title_parts)}",
         "conditions": conditions,
         "note": (
             "Select the entity BY NAME in HamAlert's own DXCC picker, not by prefix. "
@@ -1062,21 +1119,6 @@ def _find_last_spot_for_entity(entity_name, recent_spots, band=None, mode=None):
     return None
 
 
-def _adxo_entries_by_entity_name():
-    """Maps normalized entity name -> its ADXO entry (active/upcoming only, since
-    _finalize_entry already drops expired entries). Mirrors _watched_by_adxo_id's own
-    pattern but keyed by entity name, since Needed cross-references the whole no_confirms
-    list against ADXO rather than a per-entry stored link."""
-    with _lock:
-        entries = list(_state["entries"])
-    result = {}
-    for e in entries:
-        key = _normalize_entity_name(e["dxcc"])
-        if key:
-            result[key] = e
-    return result
-
-
 # --------------------------------------------------------------------------------------
 # Persistent last-seen tracking for Needed/Wanted -- added 2026-09-02.
 #
@@ -1145,115 +1187,69 @@ def _get_last_seen(key):
         return _last_seen.get(key)
 
 
-def _needed_sort_key_group(item):
-    """0 = has a real live spot right now (the actual point of this whole feature, per
-    Dan's own framing 2026-09-01) -- takes priority even over ADXO-active, unlike Watched's
-    own group ordering, since a Needed entity being merely ADXO-active carries far less
-    weight than Watched's own curated, specific DXpedition callsigns do.
-    1 = ADXO-active (no live spot yet). 2 = ADXO-upcoming. 3 = neither (CSV file order --
-    Club Log ranking not yet built, see module comment above)."""
-    if item["last_spot"]:
-        return 0
-    if item["adxo"] and item["adxo"]["active"]:
-        return 1
-    if item["adxo"]:
-        return 2
-    return 3
-
-
 def _build_dxmon_needed():
-    adxo_by_entity = _adxo_entries_by_entity_name()
+    """Unified 2026-09-04 -- one curated list (_needed), no ADXO cross-reference
+    (ADXO is Watched-only going forward -- a curated Needed entry has no DXpedition
+    date window to schedule against) and no no_confirms.csv cross-reference (that
+    file now only seeds the Trigger Builder's picker, see NEEDED_FILE's comment).
+
+    Each entry is keyed by its own stable id (not entity name alone), since two
+    different Needed entries can share an entity (e.g. a whole-entity target and a
+    separate specific-slot target on the same DXCC) and each needs its own
+    independent last-seen record -- same reasoning the old Wanted builder already
+    used for its own id-keyed records.
+
+    Sort priority (replaces the old live-spot > ADXO-active > ADXO-upcoming > CSV-
+    order chain, which no longer applies without ADXO/CSV involvement):
+      0 = has a real live spot right now, tied-broken by recency (most recent first)
+      1 = no live spot, but a persisted last-seen record exists, tie-broken by
+          recency (most recent first)
+      2 = neither -- falls back to order-added, oldest-curated-first."""
+    with _needed_lock:
+        needed_list = list(_needed)
     recent, _recent_err = _hamalert_get("/api/hamalert/recent")
     recent_spots = recent.get("spots", []) if recent else []
 
     result = []
-    for idx, ent in enumerate(_no_confirms_entities):
-        name = ent["entity"]
-        key = "needed:" + _normalize_entity_name(name)
-        adxo_entry = adxo_by_entity.get(_normalize_entity_name(name))
-        adxo_obj = None
-        if adxo_entry:
-            adxo_obj = {
-                "active": adxo_entry["active"],
-                "begin": adxo_entry["begin"],
-                "end": adxo_entry["end"],
-                "info": adxo_entry["info"],
-            }
-        last_spot = _find_last_spot_for_entity(name, recent_spots)
+    for n in needed_list:
+        key = "needed:" + n["id"]
+        last_spot = _find_last_spot_for_entity(n["entity"], recent_spots, n.get("band"), n.get("mode"))
         if last_spot:
             _record_last_seen(key, last_spot)
         result.append({
-            "type": "needed",
-            "entity": name,
-            "prefix": ent.get("prefix", ""),
-            "adxo": adxo_obj,
+            "id": n["id"],
+            "kind": _needed_entry_kind(n),  # "entity" or "slot" -- derived, see comment above _needed_entry_kind
+            "entity": n["entity"],
+            "band": n.get("band", ""),
+            "mode": n.get("mode", ""),
+            "note": n.get("note", ""),
+            "added": n.get("added", ""),
             "last_spot": last_spot,
             "last_seen": _get_last_seen(key),
-            "_csv_order": idx,  # stable fallback ordering, see _needed_sort_key_group
         })
 
-    result.sort(key=lambda item: item["_csv_order"])
+    # Stable multi-key sort, least significant first (matches this file's existing
+    # convention elsewhere, e.g. the old _build_dxmon_needed above did the same).
+    result.sort(key=lambda item: item["added"])  # tier 2 fallback: order-added, oldest first
+    result.sort(
+        key=lambda item: item["last_seen"]["received_at"] if item["last_seen"] else "",
+        reverse=True,
+    )  # tier 1: most-recently-seen first
     result.sort(
         key=lambda item: item["last_spot"]["received_at"] if item["last_spot"] else "",
         reverse=True,
-    )
-    result.sort(key=lambda item: item["adxo"]["begin"] if item["adxo"] else "9999-99-99")
-    result.sort(key=_needed_sort_key_group)
-
-    for item in result:
-        del item["_csv_order"]
+    )  # tier 0 tie-break: most-recent live spot first
+    result.sort(
+        key=lambda item: 0 if item["last_spot"] else (1 if item["last_seen"] else 2)
+    )  # group: live > last-seen > neither
     return result
 
 
-def _build_dxmon_wanted_targets():
-    """Same shape as Needed's own output, so the merged endpoint can present both
-    uniformly -- Wanted entries just carry band/mode too, and are never ADXO-linked
-    (Wanted targets a slot on an entity Dan's already confirmed, not a DXpedition).
-    Keyed by the Wanted entry's own stable id (not entity name alone), since two
-    different Wanted entries can share an entity (different band/mode gaps on the
-    same DXCC) and each needs its own independent last-seen record."""
-    with _wanted_lock:
-        wanted_list = list(_wanted)
-    recent, _recent_err = _hamalert_get("/api/hamalert/recent")
-    recent_spots = recent.get("spots", []) if recent else []
-
-    result = []
-    for w in wanted_list:
-        key = "wanted:" + w["id"]
-        last_spot = _find_last_spot_for_entity(w["entity"], recent_spots, w.get("band"), w.get("mode"))
-        if last_spot:
-            _record_last_seen(key, last_spot)
-        result.append({
-            "type": "wanted",
-            "entity": w["entity"],
-            "band": w.get("band", ""),
-            "mode": w.get("mode", ""),
-            "note": w.get("note", ""),
-            "adxo": None,
-            "last_spot": last_spot,
-            "last_seen": _get_last_seen(key),
-        })
-
-    # Real spot right now sorts first within Wanted too, same reasoning as Needed's group 0.
-    result.sort(key=lambda item: item["last_spot"]["received_at"] if item["last_spot"] else "", reverse=True)
-    result.sort(key=lambda item: 0 if item["last_spot"] else 1)
-    return result
-
-
-def _build_dxmon_targets():
-    """Merged Needed+Wanted, tagged by type. Needed sorts before Wanted as a whole group --
-    Dan's explicit priority call 2026-09-01 ('Needed entities would take priority over
-    Wanted') -- each group keeps its own internal ordering from its own builder above."""
-    needed = _build_dxmon_needed()
-    wanted = _build_dxmon_wanted_targets()
-    return needed + wanted
-
-
-@app.route("/api/dxmon/targets")
-def api_dxmon_targets():
+@app.route("/api/dxmon/needed")
+def api_dxmon_needed():
     return jsonify({
         "updated": datetime.now(EASTERN).isoformat(),
-        "targets": _build_dxmon_targets(),
+        "needed": _build_dxmon_needed(),
     })
 
 
@@ -1345,40 +1341,40 @@ def page_watch_remove(watched_id):
     return redirect(url_for("page_watched"))
 
 
-@app.route("/wanted")
-def page_wanted():
-    with _wanted_lock:
-        entries = sorted(_wanted, key=lambda w: w["added"], reverse=True)
-    return render_template("wanted.html", entries=entries)
+@app.route("/needed")
+def page_needed():
+    with _needed_lock:
+        entries = sorted(_needed, key=lambda w: w["added"], reverse=True)
+    return render_template("needed.html", entries=entries)
 
 
-@app.route("/wanted/add", methods=["POST"])
-def page_wanted_add():
-    _add_wanted(
+@app.route("/needed/add", methods=["POST"])
+def page_needed_add():
+    _add_needed(
         entity=request.form.get("entity"),
         band=request.form.get("band"),
         mode=request.form.get("mode"),
         note=request.form.get("note"),
     )
-    return redirect(url_for("page_wanted"))
+    return redirect(url_for("page_needed"))
 
 
-@app.route("/wanted/remove/<wanted_id>", methods=["POST"])
-def page_wanted_remove(wanted_id):
-    _remove_wanted(wanted_id)
-    return redirect(url_for("page_wanted"))
+@app.route("/needed/remove/<needed_id>", methods=["POST"])
+def page_needed_remove(needed_id):
+    _remove_needed(needed_id)
+    return redirect(url_for("page_needed"))
 
 
-@app.route("/api/wanted", methods=["GET"])
-def api_wanted_list():
-    with _wanted_lock:
-        return jsonify({"entries": list(_wanted), "count": len(_wanted)})
+@app.route("/api/needed", methods=["GET"])
+def api_needed_list():
+    with _needed_lock:
+        return jsonify({"entries": list(_needed), "count": len(_needed)})
 
 
-@app.route("/api/wanted", methods=["POST"])
-def api_wanted_add():
+@app.route("/api/needed", methods=["POST"])
+def api_needed_add():
     payload = request.get_json(silent=True) or {}
-    entry, error = _add_wanted(
+    entry, error = _add_needed(
         entity=payload.get("entity"),
         band=payload.get("band"),
         mode=payload.get("mode"),
@@ -1389,24 +1385,24 @@ def api_wanted_add():
     return jsonify(entry), 201
 
 
-@app.route("/api/wanted/<wanted_id>", methods=["DELETE"])
-def api_wanted_remove(wanted_id):
-    removed = _remove_wanted(wanted_id)
+@app.route("/api/needed/<needed_id>", methods=["DELETE"])
+def api_needed_remove(needed_id):
+    removed = _remove_needed(needed_id)
     if not removed:
         return jsonify({"error": "not found"}), 404
-    return jsonify({"removed": wanted_id})
+    return jsonify({"removed": needed_id})
 
 
-@app.route("/triggers/wanted/<wanted_id>")
-def page_triggers_for_wanted(wanted_id):
-    """Create-Trigger link from a Wanted entry -- goes straight to the generated
+@app.route("/triggers/needed/<needed_id>")
+def page_triggers_for_needed(needed_id):
+    """Create-Trigger link from a Needed entry -- goes straight to the generated
     recipe, since all three fields (entity/band/mode) are already known. No form
     step needed, unlike the general /triggers builder."""
-    with _wanted_lock:
-        entry = next((w for w in _wanted if w["id"] == wanted_id), None)
+    with _needed_lock:
+        entry = next((w for w in _needed if w["id"] == needed_id), None)
     if entry is None:
-        return "Wanted entry not found", 404
-    recipe = _build_wanted_trigger_recipe(entry["entity"], entry["band"], entry["mode"])
+        return "Needed entry not found", 404
+    recipe = _build_needed_trigger_recipe(entry["entity"], entry["band"], entry["mode"])
     recipes = [recipe] if recipe else []
     return render_template(
         "triggers.html",
@@ -1500,7 +1496,7 @@ def page_triggers_generate():
 if __name__ == "__main__":
     _load_watched()
     _load_no_confirms()
-    _load_wanted()
+    _load_needed()
     _load_last_seen()
     t = threading.Thread(target=_scheduler_loop, daemon=True)
     t.start()

@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Needed{% endblock %}
+{% block content %}
+  <p class="meta">
+    Whatever you're actively chasing and have a HamAlert trigger set up for -- a
+    whole never-confirmed entity (any band/mode) or a specific band/mode gap on an
+    entity you've already confirmed. Always a small, manually-curated list; this
+    page is the source of truth for what shows on the device's Needed tab.
+  </p>
+  <p class="meta">{{ entries|length }} needed target(s).</p>
+
+  {% if not entries %}
+    <div class="empty">Nothing needed yet -- add one below.</div>
+  {% endif %}
+
+  {% for w in entries %}
+    <div class="card">
+      <div class="card-top">
+        <div>
+          {% if w.band or w.mode %}
+            <span class="badge upcoming" style="margin-right: 0.5rem;">Slot</span>
+          {% else %}
+            <span class="badge" style="margin-right: 0.5rem;">Entity</span>
+          {% endif %}
+          <span class="dxcc">{{ w.entity }}</span>
+          {% if w.band or w.mode %}
+            &mdash; <span class="callsign">{{ [w.band, w.mode] | select | join(' ') }}</span>
+          {% endif %}
+        </div>
+        <form method="post" action="{{ url_for('page_needed_remove', needed_id=w.id) }}"
+              onsubmit="return confirm('Remove {{ w.entity }} {{ w.band }}{{ w.mode }} from needed?');">
+          <button type="submit" class="remove">Remove</button>
+        </form>
+      </div>
+      {% if w.note %}<div class="info">{{ w.note }}</div>{% endif %}
+      <div class="meta">Added {{ w.added }}</div>
+      <div class="watch-form" style="margin-top: 0.6rem;">
+        <a href="{{ url_for('page_triggers_for_needed', needed_id=w.id) }}" style="color: var(--accent-active); font-size: 0.85rem;">
+          + Create HamAlert trigger for {{ w.entity }}{% if w.band %} {{ w.band }}{% endif %}{% if w.mode %} {{ w.mode }}{% endif %}
+        </a>
+      </div>
+    </div>
+  {% endfor %}
+
+  <div class="card" style="margin-top: 1.5rem;">
+    <div class="dxcc">Add a needed target</div>
+    <form class="watch-form" method="post" action="{{ url_for('page_needed_add') }}" style="margin-top: 0.7rem;">
+      <input type="text" name="entity" placeholder="Entity (e.g. Japan)" required>
+      <input type="text" name="band" placeholder="Band (optional, e.g. 160m)">
+      <input type="text" name="mode" placeholder="Mode (optional, e.g. CW)">
+      <input type="text" name="note" placeholder="note (optional)">
+      <button type="submit">+ Add</button>
+    </form>
+    <p class="meta" style="margin-top: 0.5rem;">
+      Leave band and mode both blank for a whole-entity target (any band/mode).
+      Fill in one or both for a specific slot on an entity you've already confirmed.
+    </p>
+  </div>
+{% endblock %}

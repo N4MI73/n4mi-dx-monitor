@@ -8,6 +8,10 @@ services:
     environment:
       - PORT=8083
       - WATCHED_FILE=/app/data/watched.json
+      # - NEEDED_FILE=/app/data/needed.json   # default shown; override rarely needed.
+      #   Renamed from WANTED_FILE 2026-09-04. On first boot after this deploy, if
+      #   needed.json doesn't exist yet but wanted.json does (same dxmon_data volume),
+      #   the service auto-migrates it -- no manual file operation required.
       # - MIN_REFRESH_INTERVAL_SECONDS=3600   # override if needed
       # - FLASK_SECRET_KEY=some-random-string  # optional override; fine to leave default (LAN-only, no auth)
     volumes:
