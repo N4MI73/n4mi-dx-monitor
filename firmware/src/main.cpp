@@ -1345,6 +1345,19 @@ static lv_obj_t *make_screen_needed(void)
 
 static void do_full_refresh(void)
 {
+    // Real diagnostic addition, 2026-09-04 -- added after doubling the RGB bounce buffer
+    // (main.cpp, setup()) made both the display glitch AND Wi-Fi connect failure WORSE on
+    // one real test, then reverting it fixed both. That result points at internal DRAM
+    // headroom as the real tight constraint, not bounce buffer size directly -- but it's
+    // still a hypothesis, not confirmed. Logging free internal (DMA-capable) heap and free
+    // PSRAM once per refresh cycle (~60s, or on Force Refresh) is cheap and gives real
+    // numbers to correlate against the next glitch occurrence, rather than guessing at
+    // further display-config changes. Watch specifically for a real dip in the internal
+    // heap number around/before an occurrence.
+    Serial.printf("Heap free -- internal: %u bytes, PSRAM: %u bytes\n",
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
     // `static`, not stack-local, deliberately -- the real 2026-09-02 bug this avoids
     // was a stack overflow from a large struct declared as a local variable here
     // (the ESP32's default task stack is only ~8KB), confirmed via real hardware
@@ -1417,6 +1430,18 @@ void setup()
 #if ESP_PANEL_DRIVERS_BUS_ENABLE_RGB && CONFIG_IDF_TARGET_ESP32S3
     auto lcd_bus = lcd->getBus();
     if (lcd_bus->getBasicAttributes().type == ESP_PANEL_BUS_TYPE_RGB) {
+        // REVERTED to 10 rows, 2026-09-04 -- doubling to 20 (tried same day) made things
+        // WORSE on the one real test: the visual glitch got more severe (a much larger
+        // portion of the frame shifted, not just the tab bar) AND Wi-Fi failed to connect
+        // within WIFI_CONNECT_TIMEOUT_MS for the first time ever seen. Real, plausible
+        // mechanism: the extra ~16KB the larger bounce buffer claims from internal DRAM
+        // cut into the already-tight margin freed up during the 2026-09-03 memory arc
+        // (TargetsData/NeededData moved to PSRAM specifically to make room for the LVGL
+        // pool increase) -- Wi-Fi's own connection setup also needs internal DMA-capable
+        // memory. Reverted to the known-working value rather than stacking another change
+        // on an unconfirmed negative result. Do not re-attempt a larger bounce buffer
+        // without first freeing more internal DRAM elsewhere, or confirming via Serial
+        // heap-free logging that the increase isn't the real cause.
         static_cast<BusRGB *>(lcd_bus)->configRGB_BounceBufferSize(lcd->getFrameWidth() * 10);
     }
 #endif
@@ -1467,6 +1492,18 @@ void setup()
 
 void loop()
 {
+    // Scheduled-reboot mitigation for the unresolved display-rendering glitch -- see
+    // config.h's SCHEDULED_REBOOT_INTERVAL_MS comment for the full reasoning. Checked
+    // first, before any refresh/redraw work, so it never fires mid-fetch or mid-render.
+    // Logged clearly as a deliberate restart so it's never mistaken for a crash when
+    // reviewing Serial output later.
+    if (millis() >= SCHEDULED_REBOOT_INTERVAL_MS) {
+        Serial.printf("Scheduled reboot -- uptime %lu ms reached %lu ms interval, restarting\n",
+                      (unsigned long)millis(), (unsigned long)SCHEDULED_REBOOT_INTERVAL_MS);
+        delay(100);  // let the Serial line actually flush before the restart cuts power to the peripheral
+        ESP.restart();
+    }
+
     bool time_for_refresh = (WiFi.status() == WL_CONNECTED && millis() - last_fetch_ms >= LIVE_FETCH_INTERVAL_MS);
 
     if (force_refresh_requested || time_for_refresh) {

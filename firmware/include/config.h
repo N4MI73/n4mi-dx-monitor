@@ -9,6 +9,17 @@
 
 #define WIFI_CONNECT_TIMEOUT_MS  15000
 #define LIVE_FETCH_INTERVAL_MS   60000
+// Mitigation for the still-unresolved display-rendering glitch (2026-09-04) -- root
+// cause not found despite ruling out available heap and pixel-clock bandwidth as
+// factors, and the display driver library doesn't expose the underrun/vsync callback
+// hooks that would let us catch it directly (confirmed by inspecting BusRGB's real
+// header). Real recurrence rate observed by Dan is well under an hour, not once-daily,
+// so this uses a plain uptime interval (millis()-based) rather than a scheduled
+// wall-clock time -- it needs to fire regardless of time of day. Real, honest cost:
+// a brief blank/reconnecting screen every interval, even if someone's looking right
+// at that moment -- accepted as the lesser inconvenience versus the glitch itself.
+// Single constant, easy to retune if 30 min turns out too aggressive or not enough.
+#define SCHEDULED_REBOOT_INTERVAL_MS  (30UL * 60UL * 1000UL)
 
 #define MAX_WATCHED_ENTRIES  10
 // Unified Needed/Wanted redesign, 2026-09-04: /api/dxmon/needed now serves only
