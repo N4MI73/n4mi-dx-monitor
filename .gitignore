@@ -34,6 +34,7 @@ wifi_credentials.h
 .DS_Store
 Thumbs.db
 desktop.ini
+/logs
 
 # --- Editor backups ---
 *~
