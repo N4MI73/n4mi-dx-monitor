@@ -565,6 +565,22 @@ def _needed_entry_kind(entry):
     return "entity"
 
 
+def _needed_days_old(entry):
+    """Days since a Needed entry was curated, for the web page's stale-entry flag
+    (2026-09-05) -- purely a web curation UI concern, not exposed via
+    /api/dxmon/needed, since the device has no use for it. Returns None if
+    'added' is missing or unparseable, so the template can skip the flag rather
+    than show a wrong number."""
+    added = (entry.get("added") or "").strip()
+    if not added:
+        return None
+    try:
+        added_dt = datetime.fromisoformat(added)
+    except ValueError:
+        return None
+    return (datetime.now(EASTERN) - added_dt).days
+
+
 def _add_needed(entity, band, mode, note=""):
     """Entity is always required. Band and mode are each independently optional and
     may now BOTH be blank (2026-09-04 -- represents a whole never-confirmed entity,
@@ -598,6 +614,28 @@ def _remove_needed(needed_id):
         if removed:
             _save_needed()
     return removed
+
+
+def _update_needed(needed_id, entity, band, mode, note=""):
+    """In-place edit (2026-09-05) -- id and added are preserved unchanged; only
+    entity/band/mode/note are replaced. Same validation as _add_needed (entity
+    required, band/mode each independently optional)."""
+    entity = (entity or "").strip()
+    band = (band or "").strip()
+    mode = (mode or "").strip()
+    if not entity:
+        return None, "Entity is required."
+
+    with _needed_lock:
+        for w in _needed:
+            if w["id"] == needed_id:
+                w["entity"] = entity
+                w["band"] = band
+                w["mode"] = mode
+                w["note"] = (note or "").strip()
+                _save_needed()
+                return w, None
+    return None, "Not found."
 
 
 # --------------------------------------------------------------------------------------
@@ -1080,6 +1118,22 @@ def _normalize_entity_name(name):
     return (name or "").strip().lower()
 
 
+def _needed_entity_kind_exists(entity_name):
+    """True if a whole-entity (band+mode both blank) Needed entry already exists
+    for this entity name (2026-09-05, supports the Trigger Builder's 'also add to
+    Needed' checkbox). Deliberately does NOT count an existing SLOT entry on the
+    same entity as a duplicate -- an entity can legitimately have both a
+    whole-entity target and one or more separate band/mode-slot targets at once
+    (same reasoning already established for last-seen records, see the comment
+    above that section)."""
+    target = _normalize_entity_name(entity_name)
+    with _needed_lock:
+        for w in _needed:
+            if _normalize_entity_name(w.get("entity")) == target and _needed_entry_kind(w) == "entity":
+                return True
+    return False
+
+
 def _find_last_spot_for_entity(entity_name, recent_spots, band=None, mode=None):
     """Same shape/purpose as _find_last_spot_for_callsign, but matches by entity name
     instead of callsign -- the right join key for Needed (any band/mode) and Wanted
@@ -1358,6 +1412,10 @@ def page_watch_remove(watched_id):
 def page_needed():
     with _needed_lock:
         entries = sorted(_needed, key=lambda w: w["added"], reverse=True)
+    # 2026-09-05: attach days_old for the stale-entry flag -- computed here rather
+    # than in the template, since Jinja has no built-in date arithmetic. Web-only,
+    # not part of the entry shape returned by /api/dxmon/needed.
+    entries = [dict(w, days_old=_needed_days_old(w)) for w in entries]
     return render_template("needed.html", entries=entries)
 
 
@@ -1381,6 +1439,33 @@ def page_needed_add():
 @app.route("/needed/remove/<needed_id>", methods=["POST"])
 def page_needed_remove(needed_id):
     _remove_needed(needed_id)
+    return redirect(url_for("page_needed"))
+
+
+@app.route("/needed/edit/<needed_id>", methods=["GET"])
+def page_needed_edit_form(needed_id):
+    # 2026-09-05: reuses needed.html's own "Add a needed target" card in edit mode
+    # (pre-filled, posts to page_needed_edit_save instead of page_needed_add)
+    # rather than a separate template -- same form, same checkbox groups, just
+    # pre-checked to the entry's current band/mode.
+    with _needed_lock:
+        entries = sorted(_needed, key=lambda w: w["added"], reverse=True)
+        edit_entry = next((w for w in _needed if w["id"] == needed_id), None)
+    if not edit_entry:
+        return redirect(url_for("page_needed"))
+    entries = [dict(w, days_old=_needed_days_old(w)) for w in entries]
+    return render_template("needed.html", entries=entries, edit_entry=edit_entry)
+
+
+@app.route("/needed/edit/<needed_id>", methods=["POST"])
+def page_needed_edit_save(needed_id):
+    _update_needed(
+        needed_id,
+        entity=request.form.get("entity"),
+        band=", ".join(request.form.getlist("band")),
+        mode=", ".join(request.form.getlist("mode")),
+        note=request.form.get("note"),
+    )
     return redirect(url_for("page_needed"))
 
 
@@ -1490,6 +1575,7 @@ def page_triggers():
         entities=_no_confirms_entities,
         prefill_callsign=prefill_callsign,
         recipes=None,
+        added_to_needed=None,
     )
 
 
@@ -1504,11 +1590,37 @@ def page_triggers_generate():
         entities=selected_entities + extra_entities,
     )
 
+    # 2026-09-05: "also add to Needed" convenience checkbox. Scoped deliberately
+    # to entities only (checked never-confirmed entities + typed extra entities)
+    # -- callsigns aren't entity names and would need a real country-file lookup
+    # to map one to the other, which is out of scope for this convenience feature.
+    # Every entity added this way is a whole-entity target (band/mode both blank),
+    # since this general-purpose builder has no band/mode fields at all -- that's
+    # the correct mapping onto Needed's own ENTITY kind. Dedupes against an
+    # existing entity-kind entry for the same entity (see
+    # _needed_entity_kind_exists); does NOT touch or duplicate any existing
+    # SLOT entry on that same entity, since those are a separate, valid kind.
+    added_to_needed = []
+    if request.form.get("also_add_to_needed"):
+        seen = set()
+        for entity in selected_entities + extra_entities:
+            entity = (entity or "").strip()
+            if not entity:
+                continue
+            key = _normalize_entity_name(entity)
+            if key in seen or _needed_entity_kind_exists(entity):
+                continue
+            seen.add(key)
+            entry, error = _add_needed(entity, "", "")
+            if entry:
+                added_to_needed.append(entity)
+
     return render_template(
         "triggers.html",
         entities=_no_confirms_entities,
         prefill_callsign="",
         recipes=recipes,
+        added_to_needed=added_to_needed,
     )
 
 

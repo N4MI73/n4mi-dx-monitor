@@ -22,15 +22,21 @@
           {% else %}
             <span class="badge" style="margin-right: 0.5rem;">Entity</span>
           {% endif %}
+          {% if w.days_old is not none and w.days_old >= 30 %}
+            <span class="badge stale" style="margin-right: 0.5rem;" title="Curated {{ w.days_old }} days ago -- worth a review">{{ w.days_old }}d old</span>
+          {% endif %}
           <span class="dxcc">{{ w.entity }}</span>
           {% if w.band or w.mode %}
             &mdash; <span class="callsign">{{ [w.band, w.mode] | select | join(' ') }}</span>
           {% endif %}
         </div>
-        <form method="post" action="{{ url_for('page_needed_remove', needed_id=w.id) }}"
-              onsubmit="return confirm('Remove {{ w.entity }} {{ w.band }}{{ w.mode }} from needed?');">
-          <button type="submit" class="remove">Remove</button>
-        </form>
+        <div style="display: flex; gap: 0.5rem;">
+          <a href="{{ url_for('page_needed_edit_form', needed_id=w.id) }}" class="edit-link">Edit</a>
+          <form method="post" action="{{ url_for('page_needed_remove', needed_id=w.id) }}"
+                onsubmit="return confirm('Remove {{ w.entity }} {{ w.band }}{{ w.mode }} from needed?');">
+            <button type="submit" class="remove">Remove</button>
+          </form>
+        </div>
       </div>
       {% if w.note %}<div class="info">{{ w.note }}</div>{% endif %}
       <div class="meta">Added {{ w.added }}</div>
@@ -43,17 +49,26 @@
   {% endfor %}
 
   <div class="card" style="margin-top: 1.5rem;">
-    <div class="dxcc">Add a needed target</div>
-    <form class="watch-form" method="post" action="{{ url_for('page_needed_add') }}"
+    <div class="dxcc">{% if edit_entry %}Edit needed target{% else %}Add a needed target{% endif %}</div>
+    <form class="watch-form" method="post"
+          action="{{ url_for('page_needed_edit_save', needed_id=edit_entry.id) if edit_entry else url_for('page_needed_add') }}"
           style="margin-top: 0.7rem; flex-direction: column; align-items: stretch; gap: 0.9rem;">
-      <input type="text" name="entity" placeholder="Entity (e.g. Japan)" required>
+      <div>
+        <input type="text" name="entity" placeholder="Entity (e.g. Japan)" required
+               value="{{ edit_entry.entity if edit_entry else '' }}">
+        <div class="meta" style="margin-top: 0.25rem;">
+          Copy this exact name from HamAlert's own DXCC condition picker when you build the
+          trigger -- matching only handles case/whitespace, not spelling differences.
+        </div>
+      </div>
 
       <div>
         <div class="meta" style="margin-bottom: 0.3rem;">Band(s) -- leave all unchecked for any band</div>
         <div class="checkbox-group">
+          {% set current_bands = (edit_entry.band or '').lower().split(',') | map('trim') | list if edit_entry else [] %}
           {% for b in ["160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"] %}
             <label class="checkbox-chip">
-              <input type="checkbox" name="band" value="{{ b }}"> {{ b }}
+              <input type="checkbox" name="band" value="{{ b }}" {% if b in current_bands %}checked{% endif %}> {{ b }}
             </label>
           {% endfor %}
         </div>
@@ -65,17 +80,21 @@
           (matches the 4 modes HamAlert's own trigger conditions support for these entries)
         </div>
         <div class="checkbox-group">
+          {% set current_modes = (edit_entry.mode or '').lower().split(',') | map('trim') | list if edit_entry else [] %}
           {% for m in ["cw", "ssb", "ft4", "ft8"] %}
             <label class="checkbox-chip">
-              <input type="checkbox" name="mode" value="{{ m }}"> {{ m|upper }}
+              <input type="checkbox" name="mode" value="{{ m }}" {% if m in current_modes %}checked{% endif %}> {{ m|upper }}
             </label>
           {% endfor %}
         </div>
       </div>
 
       <div style="display: flex; gap: 0.5rem; align-items: center;">
-        <input type="text" name="note" placeholder="note (optional)">
-        <button type="submit">+ Add</button>
+        <input type="text" name="note" placeholder="note (optional)" value="{{ edit_entry.note if edit_entry else '' }}">
+        <button type="submit">{% if edit_entry %}Save{% else %}+ Add{% endif %}</button>
+        {% if edit_entry %}
+          <a href="{{ url_for('page_needed') }}" style="color: var(--muted); font-size: 0.85rem;">Cancel</a>
+        {% endif %}
       </div>
     </form>
     <p class="meta" style="margin-top: 0.7rem;">
@@ -107,6 +126,17 @@
     .checkbox-chip input[type=checkbox] {
       margin: 0;
       cursor: pointer;
+    }
+    .badge.stale {
+      background: transparent;
+      border: 1px solid var(--danger);
+      color: var(--danger);
+    }
+    .edit-link {
+      color: var(--muted);
+      font-size: 0.85rem;
+      align-self: center;
+      text-decoration: underline;
     }
   </style>
 {% endblock %}

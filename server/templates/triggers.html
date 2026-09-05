@@ -14,6 +14,11 @@
 
   {% if recipes %}
     <p class="meta" style="margin-top: 1rem;"><a href="{{ url_for('page_triggers') }}">&larr; Back to builder</a></p>
+    {% if added_to_needed %}
+      <div class="info" style="margin-bottom: 1rem;">
+        Added to Needed (whole-entity, any band/mode): {{ added_to_needed|join(', ') }}
+      </div>
+    {% endif %}
     {% for r in recipes %}
       <div class="card">
         <div class="card-top">
@@ -57,6 +62,14 @@
       {% else %}
         <div class="empty">No entity seed file loaded -- add callsigns/entities manually above.</div>
       {% endif %}
+
+      <div style="margin-top: 1rem;">
+        <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem;">
+          <input type="checkbox" name="also_add_to_needed" value="1">
+          Also add any entities above (checked, or typed under "Extra entities") to the Needed
+          list as whole-entity targets -- skips any already there. Doesn't apply to callsigns.
+        </label>
+      </div>
 
       <div style="margin-top: 1rem;">
         <button type="submit">Generate recipe(s)</button>
