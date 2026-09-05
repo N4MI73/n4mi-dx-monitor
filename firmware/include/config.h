@@ -19,7 +19,13 @@
 // a brief blank/reconnecting screen every interval, even if someone's looking right
 // at that moment -- accepted as the lesser inconvenience versus the glitch itself.
 // Single constant, easy to retune if 30 min turns out too aggressive or not enough.
-#define SCHEDULED_REBOOT_INTERVAL_MS  (30UL * 60UL * 1000UL)
+// Interval tuning history: 30 min (2026-09-04) -> 25 min (2026-09-05 morning, after a
+// 21-minute onset was observed) -> 15 min (2026-09-05 afternoon, after a real, clearly
+// visible slip appeared within 22 minutes even at the 25-minute setting -- confirmed via
+// photo: reboot at 13:43, substantial creep visible by 14:05, next scheduled reboot at
+// 14:08 cleared it). 25 minutes still isn't reliably ahead of the glitch's real onset
+// timing; tightening further to keep the visible window as small as possible.
+#define SCHEDULED_REBOOT_INTERVAL_MS  (15UL * 60UL * 1000UL)
 
 #define MAX_WATCHED_ENTRIES  10
 // Unified Needed/Wanted redesign, 2026-09-04: /api/dxmon/needed now serves only

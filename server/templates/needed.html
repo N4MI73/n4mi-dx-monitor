@@ -44,16 +44,69 @@
 
   <div class="card" style="margin-top: 1.5rem;">
     <div class="dxcc">Add a needed target</div>
-    <form class="watch-form" method="post" action="{{ url_for('page_needed_add') }}" style="margin-top: 0.7rem;">
+    <form class="watch-form" method="post" action="{{ url_for('page_needed_add') }}"
+          style="margin-top: 0.7rem; flex-direction: column; align-items: stretch; gap: 0.9rem;">
       <input type="text" name="entity" placeholder="Entity (e.g. Japan)" required>
-      <input type="text" name="band" placeholder="Band (optional, e.g. 160m)">
-      <input type="text" name="mode" placeholder="Mode (optional, e.g. CW)">
-      <input type="text" name="note" placeholder="note (optional)">
-      <button type="submit">+ Add</button>
+
+      <div>
+        <div class="meta" style="margin-bottom: 0.3rem;">Band(s) -- leave all unchecked for any band</div>
+        <div class="checkbox-group">
+          {% for b in ["160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"] %}
+            <label class="checkbox-chip">
+              <input type="checkbox" name="band" value="{{ b }}"> {{ b }}
+            </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div>
+        <div class="meta" style="margin-bottom: 0.3rem;">
+          Mode(s) -- leave all unchecked for any mode
+          (matches the 4 modes HamAlert's own trigger conditions support for these entries)
+        </div>
+        <div class="checkbox-group">
+          {% for m in ["cw", "ssb", "ft4", "ft8"] %}
+            <label class="checkbox-chip">
+              <input type="checkbox" name="mode" value="{{ m }}"> {{ m|upper }}
+            </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 0.5rem; align-items: center;">
+        <input type="text" name="note" placeholder="note (optional)">
+        <button type="submit">+ Add</button>
+      </div>
     </form>
-    <p class="meta" style="margin-top: 0.5rem;">
-      Leave band and mode both blank for a whole-entity target (any band/mode).
-      Fill in one or both for a specific slot on an entity you've already confirmed.
+    <p class="meta" style="margin-top: 0.7rem;">
+      Leave band and mode both unchecked for a whole-entity target (any band/mode).
+      Check one or more of either for a specific slot on an entity you've already confirmed --
+      checking multiple bands or modes means any of them counts as a match.
     </p>
   </div>
+
+  <style>
+    .checkbox-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem 0.7rem;
+    }
+    .checkbox-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.85rem;
+      color: var(--text);
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 0.25rem 0.55rem;
+      cursor: pointer;
+      user-select: none;
+    }
+    .checkbox-chip input[type=checkbox] {
+      margin: 0;
+      cursor: pointer;
+    }
+  </style>
 {% endblock %}

@@ -1094,14 +1094,27 @@ def _find_last_spot_for_entity(entity_name, recent_spots, band=None, mode=None):
         return None
     band_filter = (band or "").strip().lower() or None
     mode_filter = (mode or "").strip().lower() or None
+    # Real bug found 2026-09-05: a Needed entry's band/mode fields can hold multiple
+    # comma-separated values (e.g. "17m, 15m", entered via the curation form's own
+    # "17M, 15M" example wording) -- but a single real spot only ever has ONE band
+    # and ONE mode. Comparing the whole stored string against the spot's single
+    # value with exact equality meant a multi-band/mode entry could never match at
+    # all (confirmed live: Singapore/9V1SH real 15m FT8 spots sat in HamAlert's
+    # buffer but never showed as a hit, because "15m" != "17m, 15m"). Fixed by
+    # splitting each filter into a set of acceptable individual values and matching
+    # on membership instead of whole-string equality -- single-value entries (like
+    # Sierra Leone's) behave identically to before, since a one-item set is
+    # equivalent to the old exact-match check.
+    band_filter_set = {b.strip() for b in band_filter.split(",") if b.strip()} if band_filter else None
+    mode_filter_set = {m.strip() for m in mode_filter.split(",") if m.strip()} if mode_filter else None
 
     for entry in recent_spots:
         spot = entry.get("spot", {})
         if _normalize_entity_name(spot.get("entity")) != target:
             continue
-        if band_filter and (spot.get("band") or "").strip().lower() != band_filter:
+        if band_filter_set and (spot.get("band") or "").strip().lower() not in band_filter_set:
             continue
-        if mode_filter and (spot.get("mode") or "").strip().lower() != mode_filter:
+        if mode_filter_set and (spot.get("mode") or "").strip().lower() not in mode_filter_set:
             continue
         return {
             "callsign": spot.get("callsign"),
@@ -1350,10 +1363,16 @@ def page_needed():
 
 @app.route("/needed/add", methods=["POST"])
 def page_needed_add():
+    # 2026-09-05: band/mode are now checkboxes (multiple can be checked), not free
+    # text -- getlist() collects every checked value under that name. Joined into
+    # the same ", "-separated string format the storage/matching logic already
+    # expects (see _find_last_spot_for_entity's band_filter_set/mode_filter_set),
+    # so _add_needed() itself needs no change. A single checked value still stores
+    # as a plain single-value string, identical to the old free-text behavior.
     _add_needed(
         entity=request.form.get("entity"),
-        band=request.form.get("band"),
-        mode=request.form.get("mode"),
+        band=", ".join(request.form.getlist("band")),
+        mode=", ".join(request.form.getlist("mode")),
         note=request.form.get("note"),
     )
     return redirect(url_for("page_needed"))
