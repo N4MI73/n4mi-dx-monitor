@@ -1051,12 +1051,16 @@ def _build_dxmon_watched():
                 "end": e["end"],
                 "info": e["info"],
             }
+        last_spot = _find_last_spot_for_callsign(w["callsign"], recent_spots)
+        if last_spot:
+            # 2026-09-06: feeds the callsign-level Single-Target Spot History screen.
+            _record_spot_history("callsign:" + (w["callsign"] or "").strip().lower(), last_spot)
         result.append({
             "callsign": w["callsign"],
             "dxcc": w["dxcc"],
             "note": w.get("note", ""),
             "adxo": adxo_obj,
-            "last_spot": _find_last_spot_for_callsign(w["callsign"], recent_spots),
+            "last_spot": last_spot,
             "beam": _get_heading_to_callsign(w["callsign"]),
         })
 
@@ -1134,6 +1138,41 @@ def _needed_entity_kind_exists(entity_name):
     return False
 
 
+def _entity_band_mode_matches(spot, entity_name, band_filter_set, mode_filter_set):
+    """The real matching predicate, extracted 2026-09-06 from _find_last_spot_for_entity
+    so the Category Activity Feed (which needs to find EVERY matching spot, not just
+    the single best one) can reuse the identical, already-fixed logic rather than a
+    second copy that could quietly drift out of sync with a future fix. See
+    _find_last_spot_for_entity's own docstring for the real 2026-09-05 multi-value
+    band/mode bug this matching logic already fixed once."""
+    if _normalize_entity_name(spot.get("entity")) != entity_name:
+        return False
+    if band_filter_set and (spot.get("band") or "").strip().lower() not in band_filter_set:
+        return False
+    if mode_filter_set and (spot.get("mode") or "").strip().lower() not in mode_filter_set:
+        return False
+    return True
+
+
+def _spot_info_from_entry(entry, spot):
+    """The shared spot-info dict shape returned by both _find_last_spot_for_callsign
+    and _find_last_spot_for_entity -- extracted 2026-09-06 alongside the matching
+    predicate above, for the same reuse-not-duplicate reason."""
+    return {
+        "callsign": spot.get("callsign"),
+        "band": spot.get("band"),
+        "mode": spot.get("mode"),
+        "frequency": spot.get("frequency"),
+        "received_at": entry.get("received_at"),
+        "source": spot.get("source"),
+        "comment": spot.get("comment"),
+        "raw_text": spot.get("rawText"),
+        "spotter": spot.get("spotter"),
+        "spotter_continent": spot.get("spotterContinent"),
+        "spotter_entity": spot.get("spotterEntity"),
+    }
+
+
 def _find_last_spot_for_entity(entity_name, recent_spots, band=None, mode=None):
     """Same shape/purpose as _find_last_spot_for_callsign, but matches by entity name
     instead of callsign -- the right join key for Needed (any band/mode) and Wanted
@@ -1142,47 +1181,33 @@ def _find_last_spot_for_entity(entity_name, recent_spots, band=None, mode=None):
     band/mode, if given, are additional required-match filters (Wanted's own scoping --
     Needed passes both as None, matching "any band/mode" per its own definition).
     Band comparison is normalized lowercase (spot bands are already lowercase, e.g. "15m",
-    but defensive here); mode comparison likewise (spot modes are lowercase, e.g. "ft8")."""
+    but defensive here); mode comparison likewise (spot modes are lowercase, e.g. "ft8").
+
+    Real bug found 2026-09-05: a Needed entry's band/mode fields can hold multiple
+    comma-separated values (e.g. "17m, 15m", entered via the curation form's own
+    "17M, 15M" example wording) -- but a single real spot only ever has ONE band
+    and ONE mode. Comparing the whole stored string against the spot's single
+    value with exact equality meant a multi-band/mode entry could never match at
+    all (confirmed live: Singapore/9V1SH real 15m FT8 spots sat in HamAlert's
+    buffer but never showed as a hit, because "15m" != "17m, 15m"). Fixed by
+    splitting each filter into a set of acceptable individual values and matching
+    on membership instead of whole-string equality -- single-value entries (like
+    Sierra Leone's) behave identically to before, since a one-item set is
+    equivalent to the old exact-match check. This matching logic now lives in
+    _entity_band_mode_matches() (2026-09-06), reused by the Category Activity
+    Feed endpoint so that fix can't be silently duplicated out of sync."""
     target = _normalize_entity_name(entity_name)
     if not target:
         return None
     band_filter = (band or "").strip().lower() or None
     mode_filter = (mode or "").strip().lower() or None
-    # Real bug found 2026-09-05: a Needed entry's band/mode fields can hold multiple
-    # comma-separated values (e.g. "17m, 15m", entered via the curation form's own
-    # "17M, 15M" example wording) -- but a single real spot only ever has ONE band
-    # and ONE mode. Comparing the whole stored string against the spot's single
-    # value with exact equality meant a multi-band/mode entry could never match at
-    # all (confirmed live: Singapore/9V1SH real 15m FT8 spots sat in HamAlert's
-    # buffer but never showed as a hit, because "15m" != "17m, 15m"). Fixed by
-    # splitting each filter into a set of acceptable individual values and matching
-    # on membership instead of whole-string equality -- single-value entries (like
-    # Sierra Leone's) behave identically to before, since a one-item set is
-    # equivalent to the old exact-match check.
     band_filter_set = {b.strip() for b in band_filter.split(",") if b.strip()} if band_filter else None
     mode_filter_set = {m.strip() for m in mode_filter.split(",") if m.strip()} if mode_filter else None
 
     for entry in recent_spots:
         spot = entry.get("spot", {})
-        if _normalize_entity_name(spot.get("entity")) != target:
-            continue
-        if band_filter_set and (spot.get("band") or "").strip().lower() not in band_filter_set:
-            continue
-        if mode_filter_set and (spot.get("mode") or "").strip().lower() not in mode_filter_set:
-            continue
-        return {
-            "callsign": spot.get("callsign"),
-            "band": spot.get("band"),
-            "mode": spot.get("mode"),
-            "frequency": spot.get("frequency"),
-            "received_at": entry.get("received_at"),
-            "source": spot.get("source"),
-            "comment": spot.get("comment"),
-            "raw_text": spot.get("rawText"),
-            "spotter": spot.get("spotter"),
-            "spotter_continent": spot.get("spotterContinent"),
-            "spotter_entity": spot.get("spotterEntity"),
-        }
+        if _entity_band_mode_matches(spot, target, band_filter_set, mode_filter_set):
+            return _spot_info_from_entry(entry, spot)
     return None
 
 
@@ -1254,6 +1279,87 @@ def _get_last_seen(key):
         return _last_seen.get(key)
 
 
+# --------------------------------------------------------------------------------------
+# Persistent spot history for the drill-down screens (2026-09-06)
+#
+# Real design decision, resolved before building this: HamAlert's own rolling buffer
+# only holds the last ~100 spots ACROSS EVERYTHING COMBINED, not per-callsign or
+# per-entity. For a busy Watched entry that's plenty; for a rarer Needed hit, some of
+# "last 10 spots" could easily have already aged out of that shared buffer -- the
+# identical problem last_seen.json already solves for the single-last-hit case. This
+# mirrors that exact same proven pattern rather than trusting the live buffer alone.
+#
+# Two key namespaces, matching last_seen's own "needed:<id>" convention:
+#   "callsign:<CALLSIGN>" -- one specific station's history. Used by the callsign-level
+#     Single-Target Spot History screen (an individual-spot tap, or a Watched roster
+#     row tap -- same thing for Watched, since a Watched entry already is one callsign).
+#   "needed:<id>" -- one curated Needed entry's history, which can span several
+#     different callsigns over time (a "slot" can be worked by many different
+#     DXpeditions). Used by the entity-level variant (a Needed roster-row tap).
+#
+# The Category Activity Feed screen deliberately does NOT use this store -- it shows
+# recent activity across a WHOLE category, which the live HamAlert buffer already
+# covers well enough (the aging-out problem is specific to narrow, single-target
+# filters, not broad category-wide ones). Kept simple on purpose: no persistence
+# needed there.
+# --------------------------------------------------------------------------------------
+
+SPOT_HISTORY_FILE = os.environ.get("SPOT_HISTORY_FILE", "/app/data/spot_history.json")
+SPOT_HISTORY_MAX = 10
+
+_spot_history_lock = threading.Lock()
+_spot_history = {}  # key -> list of spot-info dicts, newest first, capped at SPOT_HISTORY_MAX
+
+
+def _load_spot_history():
+    global _spot_history
+    try:
+        with open(SPOT_HISTORY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            _spot_history = data
+            log.info("Loaded spot history for %d keys from %s", len(_spot_history), SPOT_HISTORY_FILE)
+        else:
+            log.error("Spot history file did not contain a dict -- starting empty, not overwriting")
+    except FileNotFoundError:
+        log.info("No existing spot history file at %s -- starting empty", SPOT_HISTORY_FILE)
+    except (json.JSONDecodeError, OSError) as exc:
+        # Same recovery posture as _load_last_seen/_load_watched -- never let a corrupt
+        # file silently wipe real data on disk. Start empty in memory this run only.
+        log.error("Failed to load spot history file (%s) -- starting empty in memory, "
+                   "NOT overwriting the file on disk: %s", SPOT_HISTORY_FILE, exc)
+        _spot_history = {}
+
+
+def _save_spot_history():
+    """Atomic write, same pattern as _save_last_seen/_save_watched."""
+    os.makedirs(os.path.dirname(SPOT_HISTORY_FILE), exist_ok=True)
+    tmp_path = SPOT_HISTORY_FILE + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(_spot_history, f, indent=2)
+    os.replace(tmp_path, SPOT_HISTORY_FILE)
+
+
+def _record_spot_history(key, spot_info):
+    """Appends spot_info to this key's history if it's genuinely a new spot -- compares
+    against whatever's currently at the front of the list by received_at, so the same
+    live spot doesn't get appended again on every ~60s poll cycle while it's still the
+    current hit. Newest-first, capped at SPOT_HISTORY_MAX entries."""
+    new_received_at = spot_info.get("received_at") or ""
+    with _spot_history_lock:
+        history = _spot_history.setdefault(key, [])
+        if history and history[0].get("received_at", "") == new_received_at:
+            return  # already recorded -- same live spot as the last poll
+        history.insert(0, spot_info)
+        del history[SPOT_HISTORY_MAX:]
+        _save_spot_history()
+
+
+def _get_spot_history(key):
+    with _spot_history_lock:
+        return list(_spot_history.get(key, []))
+
+
 def _build_dxmon_needed():
     """Unified 2026-09-04 -- one curated list (_needed), no ADXO cross-reference
     (ADXO is Watched-only going forward -- a curated Needed entry has no DXpedition
@@ -1283,6 +1389,13 @@ def _build_dxmon_needed():
         last_spot = _find_last_spot_for_entity(n["entity"], recent_spots, n.get("band"), n.get("mode"))
         if last_spot:
             _record_last_seen(key, last_spot)
+            # 2026-09-06: feeds both drill-down variants -- entity-level (this
+            # Needed entry's own history, which can span several different
+            # callsigns over time) and callsign-level (that one station's own
+            # history, shared with Watched's and other Needed entries' hits on
+            # the same callsign).
+            _record_spot_history(key, last_spot)
+            _record_spot_history("callsign:" + (last_spot.get("callsign") or "").strip().lower(), last_spot)
         last_seen = _get_last_seen(key)
         # Real feature added 2026-09-05: Dan pointed out that for a Needed entry
         # (unlike Watched, which is already keyed by one known callsign) the
@@ -1335,6 +1448,116 @@ def api_dxmon_needed():
     return jsonify({
         "updated": datetime.now(EASTERN).isoformat(),
         "needed": _build_dxmon_needed(),
+    })
+
+
+@app.route("/api/dxmon/history/callsign/<callsign>")
+def api_dxmon_history_callsign(callsign):
+    """Callsign-level Single-Target Spot History (2026-09-06) -- up to the last 10
+    real spots for one specific station, from spot_history.json, not HamAlert's
+    shared live buffer (which may not hold 10 for a rarer callsign). Used by an
+    individual-spot tap in either Watched or Needed, and by a Watched roster-row
+    tap (a Watched entry already is one fixed callsign, so this is the same data
+    as the entry's own history)."""
+    key = "callsign:" + (callsign or "").strip().lower()
+    return jsonify({
+        "updated": datetime.now(EASTERN).isoformat(),
+        "callsign": (callsign or "").strip().upper(),
+        "beam": _get_heading_to_callsign(callsign),
+        "spots": _get_spot_history(key),
+    })
+
+
+@app.route("/api/dxmon/history/needed/<needed_id>")
+def api_dxmon_history_needed(needed_id):
+    """Entity-level Single-Target Spot History (2026-09-06) -- up to the last 10
+    real spots for one curated Needed entry, which can span several different
+    callsigns over time (unlike Watched, which is always one fixed callsign).
+    Used by a Needed roster-row tap. Returns a 404-shaped empty result (rather
+    than a hard error) if the id no longer exists -- the entry may have been
+    removed from the curated list since the drill-down screen was opened."""
+    with _needed_lock:
+        entry = next((n for n in _needed if n["id"] == needed_id), None)
+    if not entry:
+        return jsonify({
+            "updated": datetime.now(EASTERN).isoformat(),
+            "entity": None,
+            "band": "",
+            "mode": "",
+            "spots": [],
+        })
+    key = "needed:" + needed_id
+    return jsonify({
+        "updated": datetime.now(EASTERN).isoformat(),
+        "entity": entry["entity"],
+        "band": entry.get("band", ""),
+        "mode": entry.get("mode", ""),
+        "spots": _get_spot_history(key),
+    })
+
+
+@app.route("/api/dxmon/activity/watched")
+def api_dxmon_activity_watched():
+    """Category Activity Feed -- Watched (2026-09-06). Recent spots across every
+    Watched entry, newest first, read straight from HamAlert's own live buffer --
+    deliberately NOT backed by spot_history.json. A category-wide feed spans many
+    entries at once, so the live buffer is broad enough to show a real, useful
+    feed without the narrow-single-target aging-out problem spot_history.json
+    exists to solve."""
+    with _watched_lock:
+        watched_callsigns = {(w["callsign"] or "").strip().upper() for w in _watched}
+    recent, _err = _hamalert_get("/api/hamalert/recent")
+    recent_spots = recent.get("spots", []) if recent else []
+
+    matches = []
+    for entry in recent_spots:
+        spot = entry.get("spot", {})
+        spot_callsign = (spot.get("callsign") or "").strip().upper()
+        spot_full = (spot.get("fullCallsign") or "").strip().upper()
+        if watched_callsigns & {spot_callsign, spot_full}:
+            matches.append(_spot_info_from_entry(entry, spot))
+    matches.sort(key=lambda s: s.get("received_at") or "", reverse=True)
+    return jsonify({
+        "updated": datetime.now(EASTERN).isoformat(),
+        "spots": matches[:20],
+    })
+
+
+@app.route("/api/dxmon/activity/needed")
+def api_dxmon_activity_needed():
+    """Category Activity Feed -- Needed (2026-09-06). Same idea as the Watched
+    version above, but reuses _entity_band_mode_matches() -- the identical,
+    already-fixed matching predicate _find_last_spot_for_entity() itself uses --
+    rather than a second copy of that logic, since this endpoint needs every
+    matching spot across every curated entry, not just the single best one per
+    entry the way _find_last_spot_for_entity() returns."""
+    with _needed_lock:
+        needed_list = list(_needed)
+    recent, _err = _hamalert_get("/api/hamalert/recent")
+    recent_spots = recent.get("spots", []) if recent else []
+
+    filters = []
+    for n in needed_list:
+        target = _normalize_entity_name(n["entity"])
+        band_filter = (n.get("band") or "").strip().lower() or None
+        mode_filter = (n.get("mode") or "").strip().lower() or None
+        band_set = {b.strip() for b in band_filter.split(",") if b.strip()} if band_filter else None
+        mode_set = {m.strip() for m in mode_filter.split(",") if m.strip()} if mode_filter else None
+        filters.append((target, band_set, mode_set, n["entity"]))
+
+    matches = []
+    for entry in recent_spots:
+        spot = entry.get("spot", {})
+        for target, band_set, mode_set, entity_display in filters:
+            if _entity_band_mode_matches(spot, target, band_set, mode_set):
+                info = _spot_info_from_entry(entry, spot)
+                info["entity"] = entity_display
+                matches.append(info)
+                break  # one match against this spot is enough, don't double-count
+    matches.sort(key=lambda s: s.get("received_at") or "", reverse=True)
+    return jsonify({
+        "updated": datetime.now(EASTERN).isoformat(),
+        "spots": matches[:20],
     })
 
 
@@ -1647,6 +1870,7 @@ if __name__ == "__main__":
     _load_no_confirms()
     _load_needed()
     _load_last_seen()
+    _load_spot_history()
     t = threading.Thread(target=_scheduler_loop, daemon=True)
     t.start()
     app.run(host="0.0.0.0", port=LISTEN_PORT, threaded=True)

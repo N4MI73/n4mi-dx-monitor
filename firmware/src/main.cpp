@@ -100,18 +100,38 @@ static void to_upper_inplace(char *s)
  * bitten this project once (curly quotes rendering as tofu boxes on the
  * WATCHED panel's comment display, 2026-09-01); no reason to risk the same
  * class of bug on an untested glyph when a plain-ASCII alternative works. */
-static void format_spotted_line(const SpotInfo &spot, char *out, size_t out_size)
+/** Formats just "N deg / N km" (empty string if no beam data) -- added
+ * 2026-09-06 so the callsign and its beam heading can be shown as two
+ * separately-styled labels (callsign made bold/bright/larger per Dan's
+ * request) rather than one combined string. Deliberately uses the plain
+ * ASCII "deg" abbreviation rather than a degree symbol -- the embedded
+ * Montserrat bitmap font's Unicode coverage has already bitten this project
+ * once (curly quotes rendering as tofu boxes on the WATCHED panel's comment
+ * display, 2026-09-01); no reason to risk the same class of bug on an
+ * untested glyph when a plain-ASCII alternative works.
+ * Two overloads share this logic -- SpotInfo (Needed) and WatchedEntry
+ * (Watched, added 2026-09-06) both carry has_beam/heading_deg/distance_km
+ * fields with the same names, but they're unrelated structs, so C++ won't
+ * implicitly convert one to the other; a shared raw-values helper avoids
+ * duplicating the actual formatting logic. */
+static void format_beam_suffix_raw(bool has_beam, float heading_deg, int distance_km,
+                                    char *out, size_t out_size)
 {
-    if (!spot.present || spot.callsign[0] == '\0') {
-        out[0] = '\0';
-        return;
-    }
-    if (spot.has_beam) {
-        snprintf(out, out_size, "%s -- %.0f deg / %d km",
-                 spot.callsign, spot.heading_deg, spot.distance_km);
+    if (has_beam) {
+        snprintf(out, out_size, "%.0f deg / %d km", heading_deg, distance_km);
     } else {
-        snprintf(out, out_size, "%s", spot.callsign);
+        out[0] = '\0';
     }
+}
+
+static void format_beam_suffix(const SpotInfo &spot, char *out, size_t out_size)
+{
+    format_beam_suffix_raw(spot.has_beam, spot.heading_deg, spot.distance_km, out, out_size);
+}
+
+static void format_beam_suffix(const WatchedEntry &e, char *out, size_t out_size)
+{
+    format_beam_suffix_raw(e.has_beam, e.heading_deg, e.distance_km, out, out_size);
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +285,7 @@ struct OverviewWidgets {
     lv_obj_t *watched_status_lbl;
     lv_obj_t *watched_status_dot;
     lv_obj_t *watched_callsign;
+    lv_obj_t *watched_beam;   // added 2026-09-06 -- see make_screen_overview() for detail
     lv_obj_t *watched_dxcc;
     lv_obj_t *watched_freq;
     lv_obj_t *watched_mode_badge;
@@ -298,14 +319,28 @@ struct NeededWidgets {
     lv_obj_t *t1_mode_badge;
     lv_obj_t *t1_mode_lbl;
     lv_obj_t *t1_when;
-    lv_obj_t *t1_spotted;      // callsign + beam heading, added 2026-09-05
+    // 2026-09-05: callsign + beam heading. 2026-09-06: split into a bold/bright
+    // callsign (t1_spotted_shadow + t1_spotted_callsign, a real double-draw bold
+    // effect -- this LVGL build has no separate bold font weight anywhere in the
+    // codebase, only different sizes of the same regular weight, so a genuine
+    // "bold" needs this technique rather than an unverified bold font asset;
+    // mirrors the fake-bold double-draw trick already proven in the sibling
+    // PropMon/APRSMon project) and a separate, smaller/muted beam-heading label
+    // (t1_spotted_beam), per Dan's request to make the callsign specifically
+    // stand out more without also emphasizing the heading text.
+    lv_obj_t *t1_spotted_shadow;
+    lv_obj_t *t1_spotted_callsign;
+    lv_obj_t *t1_spotted_beam;
     lv_obj_t *t1_more_badge;
     lv_obj_t *t1_more_lbl;
 
     lv_obj_t *t2_group;
     lv_obj_t *t2_entity;
     lv_obj_t *t2_when;
-    lv_obj_t *t2_spotted;      // callsign + beam heading, added 2026-09-05
+    // 2026-09-06: same split as Tier 1 -- see comment above.
+    lv_obj_t *t2_spotted_shadow;
+    lv_obj_t *t2_spotted_callsign;
+    lv_obj_t *t2_spotted_beam;
 
     lv_obj_t *t3_group;
     lv_obj_t *t3_count;
@@ -345,6 +380,15 @@ static lv_obj_t *make_screen_overview(void)
                                                    "CONNECTING", COLOR_TEXT_MUTED, 20, 18);
 
     ov.watched_callsign = make_label(watched, "--", &lv_font_montserrat_30, COLOR_TEXT_PRIMARY, 20, 44);
+    // Added 2026-09-06: beam heading, always sent by /api/dxmon/watched as a
+    // top-level "beam" field (one fixed callsign per Watched entry, so no
+    // per-spot variation the way Needed has). This was purely a firmware
+    // display gap -- the web /watched page has shown it since 2026-08-25.
+    // Positioned inline to the callsign's right (measured after setting text
+    // each refresh, same technique as Needed's own beam display) rather than
+    // needing new vertical space in an already-tight panel. Styled to match
+    // what was just approved for Needed: montserrat_14, bright text color.
+    ov.watched_beam = make_label(watched, "", &lv_font_montserrat_14, COLOR_TEXT_PRIMARY, 0, 44);
     ov.watched_dxcc = make_label(watched, "Waiting for first fetch...", &lv_font_montserrat_16,
                                   COLOR_TEXT_SECOND, 20, 84);
 
@@ -470,11 +514,23 @@ static lv_obj_t *make_screen_overview(void)
     // Added 2026-09-05: the spotted callsign (and its beam heading, when the
     // lookup succeeds) -- real, useful information Needed's own entity/slot
     // targets don't otherwise show anywhere, unlike Watched where the callsign
-    // IS the entry itself. Sits in the gap between the stat row and the
-    // "+N more tracked" badge, which moved down 24px to make room (see below).
-    nw.t1_spotted = make_label(nw.t1_group, "", &lv_font_montserrat_12, COLOR_TEXT_SECOND, 20, 192);
+    // IS the entry itself.
+    // 2026-09-06: callsign made more prominent per Dan's request, then enlarged
+    // further the same day -- now montserrat_26 (matching the size already
+    // proven for Watched's own roster-row callsigns), NEEDED's own bright amber
+    // accent color, and a real double-draw bold effect (shadow copy 1px right,
+    // same text/color/font, drawn first so the main label overlaps it). The
+    // beam suffix sits inline to the callsign's right rather than on its own
+    // line, positioned in update_overview_needed() once the callsign's real
+    // rendered width is known each refresh (same measure-then-align technique
+    // as make_status_indicator()) -- keeps this to one line despite the much
+    // taller font, so the "+N more tracked" badge only needs to move down
+    // once, not twice.
+    nw.t1_spotted_shadow = make_label(nw.t1_group, "", &lv_font_montserrat_26, COLOR_ACCENT_AMBER, 21, 196);
+    nw.t1_spotted_callsign = make_label(nw.t1_group, "", &lv_font_montserrat_26, COLOR_ACCENT_AMBER, 20, 196);
+    nw.t1_spotted_beam = make_label(nw.t1_group, "", &lv_font_montserrat_14, COLOR_TEXT_PRIMARY, 20, 196);
 
-    nw.t1_more_badge = make_pill_badge(nw.t1_group, "", 20, 234);
+    nw.t1_more_badge = make_pill_badge(nw.t1_group, "", 20, 254);
     nw.t1_more_lbl = lv_obj_get_child(nw.t1_more_badge, 0);
     lv_obj_add_flag(nw.t1_more_badge, LV_OBJ_FLAG_HIDDEN);
 
@@ -501,8 +557,10 @@ static lv_obj_t *make_screen_overview(void)
     lv_obj_set_width(nw.t2_entity, 338);
     lv_obj_set_pos(nw.t2_entity, 20, 130);
     nw.t2_when = make_label(nw.t2_group, "--", &lv_font_montserrat_14, COLOR_TEXT_SECOND, 20, 156);
-    // Added 2026-09-05, same idea as Tier 1 -- see comment there.
-    nw.t2_spotted = make_label(nw.t2_group, "", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 20, 180);
+    // 2026-09-06: same enlarged treatment as Tier 1 -- see comment there.
+    nw.t2_spotted_shadow = make_label(nw.t2_group, "", &lv_font_montserrat_26, COLOR_ACCENT_AMBER, 21, 190);
+    nw.t2_spotted_callsign = make_label(nw.t2_group, "", &lv_font_montserrat_26, COLOR_ACCENT_AMBER, 20, 190);
+    nw.t2_spotted_beam = make_label(nw.t2_group, "", &lv_font_montserrat_14, COLOR_TEXT_PRIMARY, 20, 190);
     lv_obj_add_flag(nw.t2_group, LV_OBJ_FLAG_HIDDEN);
 
     // Tier 3 -- cold start, nothing's ever hit. Count anchor + rotating ticker, per
@@ -548,6 +606,7 @@ static void update_overview_watched(const WatchedData &data)
         lv_label_set_text(ov.watched_status_lbl, "NO DATA");
         lv_obj_set_style_bg_color(ov.watched_status_dot, COLOR_DOT_GRAY, 0);
         lv_label_set_text(ov.watched_callsign, "--");
+        lv_label_set_text(ov.watched_beam, "");
         lv_label_set_text(ov.watched_dxcc, "Watchlist is empty");
         lv_label_set_text(ov.watched_freq, "--");
         lv_label_set_text(ov.watched_mode_lbl, "--");
@@ -579,6 +638,14 @@ static void update_overview_watched(const WatchedData &data)
 
     lv_label_set_text(ov.watched_callsign, e.callsign);
     lv_label_set_text(ov.watched_dxcc, e.dxcc);
+
+    // 2026-09-06: beam heading, inline to the callsign's right -- format_beam_suffix()
+    // already exists (built for Needed, 2026-09-05), reused here unchanged.
+    char watched_beam_buf[32];
+    format_beam_suffix(e, watched_beam_buf, sizeof(watched_beam_buf));
+    lv_label_set_text(ov.watched_beam, watched_beam_buf);
+    lv_obj_update_layout(ov.watched_callsign);
+    lv_obj_align_to(ov.watched_beam, ov.watched_callsign, LV_ALIGN_OUT_RIGHT_MID, 12, 5);
 
     if (e.has_last_spot) {
         char freq_buf[24];
@@ -748,9 +815,18 @@ static void update_overview_needed(const NeededData &data)
         format_short_datetime(t.last_spot.received_at, when_buf, sizeof(when_buf));
         lv_label_set_text(nw.t1_when, when_buf);
 
-        char spotted_buf[48];
-        format_spotted_line(t.last_spot, spotted_buf, sizeof(spotted_buf));
-        lv_label_set_text(nw.t1_spotted, spotted_buf);
+        // 2026-09-06: callsign and beam heading set as two separate labels now
+        // (see the NeededWidgets struct comment) -- shadow and main callsign
+        // labels get the same text for the double-draw bold effect. The beam
+        // suffix is positioned inline to the callsign's right each refresh,
+        // since different callsigns render at different widths.
+        lv_label_set_text(nw.t1_spotted_shadow, t.last_spot.callsign);
+        lv_label_set_text(nw.t1_spotted_callsign, t.last_spot.callsign);
+        char beam_buf[32];
+        format_beam_suffix(t.last_spot, beam_buf, sizeof(beam_buf));
+        lv_label_set_text(nw.t1_spotted_beam, beam_buf);
+        lv_obj_update_layout(nw.t1_spotted_callsign);
+        lv_obj_align_to(nw.t1_spotted_beam, nw.t1_spotted_callsign, LV_ALIGN_OUT_RIGHT_MID, 10, 3);
 
         int more = data.count - 1;
         if (more > 0) {
@@ -779,9 +855,14 @@ static void update_overview_needed(const NeededData &data)
         snprintf(line_buf, sizeof(line_buf), "Last hit: %s", when_buf);
         lv_label_set_text(nw.t2_when, line_buf);
 
-        char spotted_buf[48];
-        format_spotted_line(t.last_seen, spotted_buf, sizeof(spotted_buf));
-        lv_label_set_text(nw.t2_spotted, spotted_buf);
+        // 2026-09-06: same split and inline-alignment as Tier 1 -- see comment there.
+        lv_label_set_text(nw.t2_spotted_shadow, t.last_seen.callsign);
+        lv_label_set_text(nw.t2_spotted_callsign, t.last_seen.callsign);
+        char beam_buf[32];
+        format_beam_suffix(t.last_seen, beam_buf, sizeof(beam_buf));
+        lv_label_set_text(nw.t2_spotted_beam, beam_buf);
+        lv_obj_update_layout(nw.t2_spotted_callsign);
+        lv_obj_align_to(nw.t2_spotted_beam, nw.t2_spotted_callsign, LV_ALIGN_OUT_RIGHT_MID, 10, 3);
         return;
     }
 
@@ -1130,7 +1211,19 @@ static void make_watched_row(lv_obj_t *container, int index, const WatchedEntry 
     lv_color_t text_primary = active ? COLOR_TEXT_PRIMARY : COLOR_TEXT_SECOND;
     lv_color_t text_secondary = active ? COLOR_TEXT_SECOND : COLOR_TEXT_MUTED;
 
-    make_label(card, e.callsign, &lv_font_montserrat_26, text_primary, 36, 12);
+    lv_obj_t *cs_lbl = make_label(card, e.callsign, &lv_font_montserrat_26, text_primary, 36, 12);
+    // Added 2026-09-06: beam heading inline to the callsign's right, same
+    // measure-then-align technique as the Overview panel above.
+    char roster_beam_buf[32];
+    format_beam_suffix(e, roster_beam_buf, sizeof(roster_beam_buf));
+    if (roster_beam_buf[0] != '\0') {
+        lv_obj_t *beam_lbl = lv_label_create(card);
+        lv_label_set_text(beam_lbl, roster_beam_buf);
+        lv_obj_set_style_text_font(beam_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(beam_lbl, text_secondary, 0);
+        lv_obj_update_layout(cs_lbl);
+        lv_obj_align_to(beam_lbl, cs_lbl, LV_ALIGN_OUT_RIGHT_MID, 10, 3);
+    }
     make_label(card, e.dxcc, &lv_font_montserrat_14, text_secondary, 36, 44);
 
     if (active) {
@@ -1356,10 +1449,34 @@ static void make_target_row(lv_obj_t *container, int index, const NeededEntry &t
         // for both kinds -- entity-kind rows have no subtitle line at y=56, and
         // slot-kind rows' subtitle text ends well before y=76, so there's no
         // collision either way.
-        char spotted_buf[48];
-        format_spotted_line(spot, spotted_buf, sizeof(spotted_buf));
-        if (spotted_buf[0] != '\0') {
-            make_label(card, spotted_buf, &lv_font_montserrat_12, COLOR_TEXT_MUTED, 36, 76);
+        // 2026-09-06: callsign made more prominent per Dan's request -- larger,
+        // amber, real double-draw bold (shadow + main, same pattern as
+        // Overview's Tier 1/2) -- with the beam suffix aligned to its right
+        // once its real rendered width is known, reusing the same
+        // measure-then-position technique as make_status_indicator().
+        if (spot.callsign[0] != '\0') {
+            lv_obj_t *cs_shadow = lv_label_create(card);
+            lv_label_set_text(cs_shadow, spot.callsign);
+            lv_obj_set_style_text_font(cs_shadow, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_color(cs_shadow, COLOR_ACCENT_AMBER, 0);
+            lv_obj_set_pos(cs_shadow, 37, 74);
+
+            lv_obj_t *cs_main = lv_label_create(card);
+            lv_label_set_text(cs_main, spot.callsign);
+            lv_obj_set_style_text_font(cs_main, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_color(cs_main, COLOR_ACCENT_AMBER, 0);
+            lv_obj_set_pos(cs_main, 36, 74);
+
+            if (spot.has_beam) {
+                char beam_buf[32];
+                format_beam_suffix(spot, beam_buf, sizeof(beam_buf));
+                lv_obj_t *beam_lbl = lv_label_create(card);
+                lv_label_set_text(beam_lbl, beam_buf);
+                lv_obj_set_style_text_font(beam_lbl, &lv_font_montserrat_12, 0);
+                lv_obj_set_style_text_color(beam_lbl, COLOR_TEXT_MUTED, 0);
+                lv_obj_update_layout(cs_main);
+                lv_obj_align_to(beam_lbl, cs_main, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
+            }
         }
     } else {
         lv_obj_t *lbl = lv_label_create(card);

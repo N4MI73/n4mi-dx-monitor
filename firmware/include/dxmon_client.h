@@ -25,6 +25,15 @@ struct WatchedEntry {
                                 // "cluster" source spots (a human typed it); empty on
                                 // automated sources (rbn/pskreporter). Confirmed real
                                 // 2026-09-01 via the /hamalert curation page.
+    // Added 2026-09-06: beam heading to this entry's own callsign -- already
+    // sent by /api/dxmon/watched as a top-level "beam" field (not nested under
+    // last_spot, since a Watched entry has one fixed callsign, unlike Needed
+    // where the callsign varies per spot). The web /watched page has shown
+    // this since 2026-08-25; this was purely a firmware display gap, same
+    // pattern as the Needed callsign gap found and fixed 2026-09-05.
+    bool has_beam;
+    float heading_deg;
+    int distance_km;
 };
 
 struct WatchedData {

@@ -258,6 +258,19 @@ bool dxmon_fetch_watched(WatchedData &out)
             copy_field(we.comment, sizeof(we.comment), last_spot["comment"]);
         }
 
+        // Added 2026-09-06: top-level "beam" field, sibling of "last_spot"
+        // (not nested under it) -- one heading per entry's own fixed callsign.
+        JsonVariant beam = entry["beam"];
+        if (beam.isNull()) {
+            we.has_beam = false;
+            we.heading_deg = 0.0f;
+            we.distance_km = 0;
+        } else {
+            we.has_beam = true;
+            we.heading_deg = beam["heading_deg"] | 0.0f;
+            we.distance_km = beam["distance_km"] | 0;
+        }
+
         temp.count++;
     }
 
