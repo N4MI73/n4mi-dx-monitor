@@ -1283,6 +1283,24 @@ def _build_dxmon_needed():
         last_spot = _find_last_spot_for_entity(n["entity"], recent_spots, n.get("band"), n.get("mode"))
         if last_spot:
             _record_last_seen(key, last_spot)
+        last_seen = _get_last_seen(key)
+        # Real feature added 2026-09-05: Dan pointed out that for a Needed entry
+        # (unlike Watched, which is already keyed by one known callsign) the
+        # actual station spotted is real, useful information that was missing
+        # from the device -- e.g. a Libya SLOT entry only showed "Libya," not
+        # which DXpedition callsign (5A1AL) was actually heard. The callsign
+        # itself was already flowing through _find_last_spot_for_entity()'s
+        # return value into last_spot/last_seen; only the beam heading was
+        # genuinely new. Computed fresh here for whichever callsign is being
+        # shown, exactly matching /api/dxmon/watched's own established pattern
+        # (never persisted -- a heading to a fixed callsign doesn't change, so
+        # recomputing per request is cheap and avoids any legacy-record
+        # migration question for last_seen.json entries recorded before this
+        # feature existed).
+        if last_spot:
+            last_spot = dict(last_spot, beam=_get_heading_to_callsign(last_spot.get("callsign")))
+        if last_seen:
+            last_seen = dict(last_seen, beam=_get_heading_to_callsign(last_seen.get("callsign")))
         result.append({
             "id": n["id"],
             "kind": _needed_entry_kind(n),  # "entity" or "slot" -- derived, see comment above _needed_entry_kind
@@ -1292,7 +1310,7 @@ def _build_dxmon_needed():
             "note": n.get("note", ""),
             "added": n.get("added", ""),
             "last_spot": last_spot,
-            "last_seen": _get_last_seen(key),
+            "last_seen": last_seen,
         })
 
     # Stable multi-key sort, least significant first (matches this file's existing

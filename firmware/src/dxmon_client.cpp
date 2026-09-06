@@ -95,6 +95,21 @@ static void parse_spot_info(SpotInfo &spot, JsonVariant v)
     copy_field(spot.frequency, sizeof(spot.frequency), v["frequency"]);
     copy_field(spot.received_at, sizeof(spot.received_at), v["received_at"]);
     copy_field(spot.comment, sizeof(spot.comment), v["comment"]);
+
+    // Added 2026-09-05: beam is independently nullable (a lookup failure or
+    // unknown callsign on the server side returns null, same graceful-degradation
+    // posture already established for /api/dxmon/watched's own beam field) --
+    // defaults to false/0 rather than leaving stale values from a prior parse.
+    JsonVariant beam = v["beam"];
+    if (beam.isNull()) {
+        spot.has_beam = false;
+        spot.heading_deg = 0.0f;
+        spot.distance_km = 0;
+    } else {
+        spot.has_beam = true;
+        spot.heading_deg = beam["heading_deg"] | 0.0f;
+        spot.distance_km = beam["distance_km"] | 0;
+    }
 }
 
 bool dxmon_fetch_needed(NeededData &out)

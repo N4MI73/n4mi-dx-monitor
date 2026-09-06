@@ -85,6 +85,14 @@ struct SpotInfo {
     char frequency[16];
     char received_at[32];
     char comment[64];
+    // Added 2026-09-05: beam heading to the spotted callsign, for Needed hits only
+    // (Watched already shows its own callsign prominently as the entry itself, so
+    // this wasn't requested there). Mirrors /api/dxmon/needed's own "beam" field,
+    // computed server-side fresh per request -- never persisted, since a heading
+    // to a fixed callsign doesn't change over time.
+    bool has_beam;
+    float heading_deg;
+    int distance_km;
 };
 
 struct NeededEntry {

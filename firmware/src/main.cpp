@@ -90,6 +90,30 @@ static void to_upper_inplace(char *s)
     for (; *s; s++) *s = toupper((unsigned char)*s);
 }
 
+/** Formats "CALLSIGN -- N deg / N km" (or just "CALLSIGN" if no beam data),
+ * added 2026-09-05 for Needed's Tier 1/Tier 2 and roster row displays -- the
+ * spotted callsign is real, useful information a Needed entry (unlike Watched)
+ * doesn't otherwise show anywhere, since a Needed entry can be hit by any
+ * callsign operating that entity/slot, not one fixed known callsign.
+ * Deliberately uses the plain ASCII "deg" abbreviation rather than a degree
+ * symbol -- the embedded Montserrat bitmap font's Unicode coverage has already
+ * bitten this project once (curly quotes rendering as tofu boxes on the
+ * WATCHED panel's comment display, 2026-09-01); no reason to risk the same
+ * class of bug on an untested glyph when a plain-ASCII alternative works. */
+static void format_spotted_line(const SpotInfo &spot, char *out, size_t out_size)
+{
+    if (!spot.present || spot.callsign[0] == '\0') {
+        out[0] = '\0';
+        return;
+    }
+    if (spot.has_beam) {
+        snprintf(out, out_size, "%s -- %.0f deg / %d km",
+                 spot.callsign, spot.heading_deg, spot.distance_km);
+    } else {
+        snprintf(out, out_size, "%s", spot.callsign);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Shared header -- title (left) + status text (right), matches every mockup.
 // Returns the status label so callers needing extra header content (the
@@ -274,12 +298,14 @@ struct NeededWidgets {
     lv_obj_t *t1_mode_badge;
     lv_obj_t *t1_mode_lbl;
     lv_obj_t *t1_when;
+    lv_obj_t *t1_spotted;      // callsign + beam heading, added 2026-09-05
     lv_obj_t *t1_more_badge;
     lv_obj_t *t1_more_lbl;
 
     lv_obj_t *t2_group;
     lv_obj_t *t2_entity;
     lv_obj_t *t2_when;
+    lv_obj_t *t2_spotted;      // callsign + beam heading, added 2026-09-05
 
     lv_obj_t *t3_group;
     lv_obj_t *t3_count;
@@ -441,7 +467,14 @@ static lv_obj_t *make_screen_overview(void)
     make_label(nw.t1_group, "LAST SPOT", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 254, 150);
     nw.t1_when = make_label(nw.t1_group, "--", &lv_font_montserrat_16, COLOR_TEXT_PRIMARY, 254, 168);
 
-    nw.t1_more_badge = make_pill_badge(nw.t1_group, "", 20, 210);
+    // Added 2026-09-05: the spotted callsign (and its beam heading, when the
+    // lookup succeeds) -- real, useful information Needed's own entity/slot
+    // targets don't otherwise show anywhere, unlike Watched where the callsign
+    // IS the entry itself. Sits in the gap between the stat row and the
+    // "+N more tracked" badge, which moved down 24px to make room (see below).
+    nw.t1_spotted = make_label(nw.t1_group, "", &lv_font_montserrat_12, COLOR_TEXT_SECOND, 20, 192);
+
+    nw.t1_more_badge = make_pill_badge(nw.t1_group, "", 20, 234);
     nw.t1_more_lbl = lv_obj_get_child(nw.t1_more_badge, 0);
     lv_obj_add_flag(nw.t1_more_badge, LV_OBJ_FLAG_HIDDEN);
 
@@ -468,6 +501,8 @@ static lv_obj_t *make_screen_overview(void)
     lv_obj_set_width(nw.t2_entity, 338);
     lv_obj_set_pos(nw.t2_entity, 20, 130);
     nw.t2_when = make_label(nw.t2_group, "--", &lv_font_montserrat_14, COLOR_TEXT_SECOND, 20, 156);
+    // Added 2026-09-05, same idea as Tier 1 -- see comment there.
+    nw.t2_spotted = make_label(nw.t2_group, "", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 20, 180);
     lv_obj_add_flag(nw.t2_group, LV_OBJ_FLAG_HIDDEN);
 
     // Tier 3 -- cold start, nothing's ever hit. Count anchor + rotating ticker, per
@@ -713,6 +748,10 @@ static void update_overview_needed(const NeededData &data)
         format_short_datetime(t.last_spot.received_at, when_buf, sizeof(when_buf));
         lv_label_set_text(nw.t1_when, when_buf);
 
+        char spotted_buf[48];
+        format_spotted_line(t.last_spot, spotted_buf, sizeof(spotted_buf));
+        lv_label_set_text(nw.t1_spotted, spotted_buf);
+
         int more = data.count - 1;
         if (more > 0) {
             char more_buf[32];
@@ -739,6 +778,10 @@ static void update_overview_needed(const NeededData &data)
         format_short_datetime(t.last_seen.received_at, when_buf, sizeof(when_buf));
         snprintf(line_buf, sizeof(line_buf), "Last hit: %s", when_buf);
         lv_label_set_text(nw.t2_when, line_buf);
+
+        char spotted_buf[48];
+        format_spotted_line(t.last_seen, spotted_buf, sizeof(spotted_buf));
+        lv_label_set_text(nw.t2_spotted, spotted_buf);
         return;
     }
 
@@ -1045,12 +1088,12 @@ static void format_starts_in(const char *begin_iso, const char *now_iso,
 static lv_obj_t *watched_roster_container = NULL;
 static lv_obj_t *watched_tab_status_lbl = NULL;
 
-static lv_obj_t *make_row_card(lv_obj_t *parent, int y, bool dim_bg)
+static lv_obj_t *make_row_card(lv_obj_t *parent, int y, bool dim_bg, int height = 76)
 {
     lv_obj_t *card = lv_obj_create(parent);
     lv_obj_remove_style_all(card);
     lv_obj_set_pos(card, 0, y);
-    lv_obj_set_size(card, 760, 76);
+    lv_obj_set_size(card, 760, height);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(card, dim_bg ? lv_color_hex(0x0e1320) : COLOR_PANEL_BG, 0);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
@@ -1213,13 +1256,18 @@ static lv_obj_t *needed_tab_status_lbl = NULL;
 
 static void make_target_row(lv_obj_t *container, int index, const NeededEntry &t)
 {
-    int y = index * 84;
+    // Row grown 76 -> 96px (2026-09-05) to fit the new callsign+beam line below --
+    // Watched's own make_watched_row() is untouched, still 76px, since
+    // make_row_card()'s new height parameter defaults to 76 when not passed.
+    const int row_height = 96;
+    const int row_gap = 8;
+    int y = index * (row_height + row_gap);
     bool is_slot = (strcmp(t.kind, "slot") == 0);
     bool live = t.last_spot.present;
     bool seen = !live && t.last_seen.present;
     // else: never spotted -- the common case for a freshly-added entry.
 
-    lv_obj_t *card = make_row_card(container, y, !live);
+    lv_obj_t *card = make_row_card(container, y, !live, row_height);
 
     lv_color_t dot_color = live ? COLOR_STATUS_GREEN : (seen ? COLOR_ACCENT_AMBER : COLOR_DOT_GRAY);
     lv_obj_t *dot = lv_obj_create(card);
@@ -1303,6 +1351,16 @@ static void make_target_row(lv_obj_t *container, int index, const NeededEntry &t
         lv_obj_set_style_text_font(when_lbl, &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(when_lbl, COLOR_TEXT_MUTED, 0);
         lv_obj_align(when_lbl, LV_ALIGN_TOP_RIGHT, -20, 50);
+
+        // Added 2026-09-05: the spotted callsign + beam heading. Fixed y=76 works
+        // for both kinds -- entity-kind rows have no subtitle line at y=56, and
+        // slot-kind rows' subtitle text ends well before y=76, so there's no
+        // collision either way.
+        char spotted_buf[48];
+        format_spotted_line(spot, spotted_buf, sizeof(spotted_buf));
+        if (spotted_buf[0] != '\0') {
+            make_label(card, spotted_buf, &lv_font_montserrat_12, COLOR_TEXT_MUTED, 36, 76);
+        }
     } else {
         lv_obj_t *lbl = lv_label_create(card);
         lv_label_set_text(lbl, "Never spotted");
