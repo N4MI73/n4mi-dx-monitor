@@ -1052,9 +1052,21 @@ def _build_dxmon_watched():
                 "info": e["info"],
             }
         last_spot = _find_last_spot_for_callsign(w["callsign"], recent_spots)
-        if last_spot:
-            # 2026-09-06: feeds the callsign-level Single-Target Spot History screen.
-            _record_spot_history("callsign:" + (w["callsign"] or "").strip().lower(), last_spot)
+        # Real bug found and fixed 2026-09-06 (same root cause as the Needed
+        # fix a few lines below in _build_dxmon_needed) -- _find_last_spot_for_
+        # callsign() only returns the single most-recent match, so if a
+        # Watched callsign has several real spots currently sitting in
+        # HamAlert's own live buffer at once (different bands/times), only the
+        # newest ever got recorded into spot_history. Fixed by walking every
+        # matching spot in this poll's buffer directly.
+        target = (w["callsign"] or "").strip().upper()
+        callsign_key = "callsign:" + target.lower()
+        for entry in recent_spots:
+            spot = entry.get("spot", {})
+            spot_callsign = (spot.get("callsign") or "").upper()
+            spot_full = (spot.get("fullCallsign") or "").upper()
+            if target and target in (spot_callsign, spot_full):
+                _record_spot_history(callsign_key, _spot_info_from_entry(entry, spot))
         result.append({
             "callsign": w["callsign"],
             "dxcc": w["dxcc"],
@@ -1341,16 +1353,19 @@ def _save_spot_history():
 
 
 def _record_spot_history(key, spot_info):
-    """Appends spot_info to this key's history if it's genuinely a new spot -- compares
-    against whatever's currently at the front of the list by received_at, so the same
-    live spot doesn't get appended again on every ~60s poll cycle while it's still the
-    current hit. Newest-first, capped at SPOT_HISTORY_MAX entries."""
+    """Appends spot_info to this key's history if it's genuinely a new spot -- checked
+    against every entry already stored (not just the most recent), since a single poll
+    cycle can now record several different real spots for the same key at once (see the
+    2026-09-06 fix in _build_dxmon_needed() below), potentially out of chronological
+    order relative to what's already stored. Re-sorts after insertion to keep the list
+    newest-first regardless of insertion order. Capped at SPOT_HISTORY_MAX entries."""
     new_received_at = spot_info.get("received_at") or ""
     with _spot_history_lock:
         history = _spot_history.setdefault(key, [])
-        if history and history[0].get("received_at", "") == new_received_at:
-            return  # already recorded -- same live spot as the last poll
-        history.insert(0, spot_info)
+        if any(s.get("received_at", "") == new_received_at for s in history):
+            return  # already recorded
+        history.append(spot_info)
+        history.sort(key=lambda s: s.get("received_at") or "", reverse=True)
         del history[SPOT_HISTORY_MAX:]
         _save_spot_history()
 
@@ -1389,13 +1404,34 @@ def _build_dxmon_needed():
         last_spot = _find_last_spot_for_entity(n["entity"], recent_spots, n.get("band"), n.get("mode"))
         if last_spot:
             _record_last_seen(key, last_spot)
-            # 2026-09-06: feeds both drill-down variants -- entity-level (this
-            # Needed entry's own history, which can span several different
-            # callsigns over time) and callsign-level (that one station's own
-            # history, shared with Watched's and other Needed entries' hits on
-            # the same callsign).
-            _record_spot_history(key, last_spot)
-            _record_spot_history("callsign:" + (last_spot.get("callsign") or "").strip().lower(), last_spot)
+
+        # Real bug found and fixed 2026-09-06: a curated entry/slot can genuinely
+        # be worked by several different callsigns over time (confirmed live --
+        # Singapore's real feed shows both 9V1XX and 9V1SH). Recording only
+        # last_spot (the single current-best match) meant an older-but-still-real
+        # callsign on the same entity never got its own spot history at all --
+        # /api/dxmon/history/callsign/9V1SH came back empty despite 9V1SH having
+        # real spots sitting in HamAlert's own live buffer right now, simply
+        # because 9V1XX happened to be more recent. Fixed by walking every
+        # matching spot in this poll's buffer (reusing the same
+        # _entity_band_mode_matches predicate _find_last_spot_for_entity() itself
+        # uses, so this can't drift out of sync with that matching logic) and
+        # recording each one under both the entity-level and its own
+        # callsign-level key -- _record_spot_history's own dedup (checks the
+        # whole list, not just the front) keeps this idempotent across repeated
+        # ~60s polls of the same already-known spots.
+        target = _normalize_entity_name(n["entity"])
+        band_filter = (n.get("band") or "").strip().lower() or None
+        mode_filter = (n.get("mode") or "").strip().lower() or None
+        band_set = {b.strip() for b in band_filter.split(",") if b.strip()} if band_filter else None
+        mode_set = {m.strip() for m in mode_filter.split(",") if m.strip()} if mode_filter else None
+        for entry in recent_spots:
+            spot = entry.get("spot", {})
+            if _entity_band_mode_matches(spot, target, band_set, mode_set):
+                info = _spot_info_from_entry(entry, spot)
+                _record_spot_history(key, info)
+                _record_spot_history("callsign:" + (info.get("callsign") or "").strip().lower(), info)
+
         last_seen = _get_last_seen(key)
         # Real feature added 2026-09-05: Dan pointed out that for a Needed entry
         # (unlike Watched, which is already keyed by one known callsign) the
