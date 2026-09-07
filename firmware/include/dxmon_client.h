@@ -123,6 +123,42 @@ struct NeededData {
 bool dxmon_fetch_needed(NeededData &out);
 
 /**
+ * Category Activity Feed (2026-09-06) -- one flat list of recent real spots
+ * across a whole category (Watched or Needed), fed by /api/dxmon/activity/
+ * watched or .../needed. Deliberately NOT backed by the same persistent
+ * spot_history.json the Single-Target History screen uses -- a category-wide
+ * feed is broad enough that HamAlert's own live buffer is sufficient; the
+ * aging-out problem spot_history.json solves is specific to narrow,
+ * single-target queries. entity/kind are only populated for the Needed feed
+ * (empty for Watched, where every entry already is one known callsign).
+ */
+struct ActivitySpot {
+    char entity[48];      // empty for the Watched feed
+    char kind[8];          // "entity" or "slot" -- empty for the Watched feed
+    char callsign[16];
+    char band[8];
+    char mode[16];
+    char frequency[16];
+    char received_at[32];
+    bool has_beam;
+    float heading_deg;
+    int distance_km;
+};
+
+struct ActivityData {
+    ActivitySpot spots[MAX_ACTIVITY_SPOTS];
+    int count;
+    char updated[32];
+};
+
+/**
+ * Fetches either the Watched or Needed activity feed depending on
+ * is_needed. Same temp-then-commit-on-success pattern as the other fetch
+ * functions in this file.
+ */
+bool dxmon_fetch_activity(bool is_needed, ActivityData &out);
+
+/**
  * Fetches and parses the current watched list. Parses into a local temporary
  * first and only commits to `out` on full success -- matches the series-wide
  * "never let a partial or malformed response corrupt existing good data"

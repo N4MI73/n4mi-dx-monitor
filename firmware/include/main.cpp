@@ -381,10 +381,10 @@ static lv_obj_t *make_screen_overview(void)
 
     // --- WATCHED panel (left) -- built with honest "not yet fetched" state ---
     lv_obj_t *watched = make_panel(scr, 16, 72, 378, 316);
-    // Tap-to-drill-down handled by a transparent overlay added at the end of
-    // this panel's construction (see below, after all child widgets exist) --
-    // a direct handler here doesn't work, since LVGL's click-testing finds
-    // the deepest clickable child under the touch point first.
+    // Added 2026-09-06: tapping the panel opens the Category Activity Feed --
+    // see the Drill-Down Screens design (two SVG mockups approved 2026-09-05).
+    lv_obj_add_flag(watched, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(watched, watched_panel_click_cb, LV_EVENT_CLICKED, NULL);
 
     make_label(watched, "WATCHED", &lv_font_montserrat_16, COLOR_ACCENT_BLUE, 20, 18);
     ov.watched_status_lbl = make_status_indicator(watched, &ov.watched_status_dot, COLOR_DOT_GRAY,
@@ -451,24 +451,6 @@ static lv_obj_t *make_screen_overview(void)
     ov.watched_badge_lbl = lv_obj_get_child(ov.watched_badge, 0);
     lv_obj_add_flag(ov.watched_badge, LV_OBJ_FLAG_HIDDEN);
 
-    // Real bug found and fixed 2026-09-06: the panel-level click handler added
-    // above never fired on real hardware. LVGL's lv_obj_create() widgets are
-    // CLICKABLE BY DEFAULT -- this panel is packed with child containers
-    // (badges, dividers, the mode-badge box) that were never explicitly marked
-    // non-clickable, so touch always landed on one of THEM first and never
-    // bubbled up to the panel itself. Fixed with a transparent overlay added
-    // LAST (so it's on top in z-order, covering every other child underneath)
-    // rather than hunting down and clearing the clickable flag on every
-    // existing nested widget -- less invasive and can't miss one.
-    lv_obj_t *watched_tap_overlay = lv_obj_create(watched);
-    lv_obj_remove_style_all(watched_tap_overlay);
-    lv_obj_set_size(watched_tap_overlay, 378, 316);
-    lv_obj_set_pos(watched_tap_overlay, 0, 0);
-    lv_obj_set_style_bg_opa(watched_tap_overlay, LV_OPA_TRANSP, 0);
-    lv_obj_clear_flag(watched_tap_overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(watched_tap_overlay, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(watched_tap_overlay, watched_panel_click_cb, LV_EVENT_CLICKED, NULL);
-
     // --- NEEDED panel (right) -- real content, three-tier design agreed 2026-09-01,
     // backend (/api/dxmon/needed, including persistent last_seen) confirmed live
     // 2026-09-02; renamed/simplified from /api/dxmon/targets 2026-09-04 when Needed
@@ -477,10 +459,9 @@ static lv_obj_t *make_screen_overview(void)
     // rather than destroyed/rebuilt each refresh -- matches the stable, efficient
     // pattern already proven for Overview's WATCHED panel.
     lv_obj_t *needed = make_panel(scr, 406, 72, 378, 316);
-    // Tap-to-drill-down handled by a transparent overlay added at the end of
-    // this panel's construction (see below) -- same fix as WATCHED, for the
-    // same reason (t1/t2/t3_group and their children are all clickable-by-
-    // default lv_obj_create() widgets that fully cover the panel).
+    // Added 2026-09-06: same tap-to-drill-down behavior as the WATCHED panel.
+    lv_obj_add_flag(needed, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(needed, needed_panel_click_cb, LV_EVENT_CLICKED, NULL);
     make_label(needed, "NEEDED", &lv_font_montserrat_16, COLOR_ACCENT_AMBER, 20, 18);
     nw.status_lbl = lv_label_create(needed);
     lv_label_set_text(nw.status_lbl, "-- TRACKED");
@@ -616,18 +597,6 @@ static lv_obj_t *make_screen_overview(void)
     lv_obj_set_style_text_font(nw.loading_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(nw.loading_lbl, COLOR_TEXT_MUTED, 0);
     lv_obj_set_pos(nw.loading_lbl, 20, 88);
-
-    // 2026-09-06: same transparent-overlay fix as the WATCHED panel -- added
-    // last, so it sits on top of t1_group/t2_group/t3_group/loading_lbl in
-    // z-order regardless of which one is currently visible.
-    lv_obj_t *needed_tap_overlay = lv_obj_create(needed);
-    lv_obj_remove_style_all(needed_tap_overlay);
-    lv_obj_set_size(needed_tap_overlay, 378, 316);
-    lv_obj_set_pos(needed_tap_overlay, 0, 0);
-    lv_obj_set_style_bg_opa(needed_tap_overlay, LV_OPA_TRANSP, 0);
-    lv_obj_clear_flag(needed_tap_overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(needed_tap_overlay, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(needed_tap_overlay, needed_panel_click_cb, LV_EVENT_CLICKED, NULL);
 
     return scr;
 }

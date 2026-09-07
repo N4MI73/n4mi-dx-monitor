@@ -845,6 +845,130 @@ def _distance_km(lat1, lon1, lat2, lon2):
     return R * c
 
 
+def _patch_pyhamtools_country_mapping(LookupLib_cls, const):
+    """Real, confirmed pyhamtools bug fix (2026-09-07) -- see the DXMon Joplin
+    note's "Beam Heading Outage" sections for the full investigation.
+
+    pyhamtools ships a bundled, static countryfilemapping.json (country name
+    -> DXCC/ADIF number). While parsing country-files.com's LIVE cty.plist
+    data, LookupLib._parse_country_file() does a raw
+    mapping[cty_list[item]["Country"]] lookup with no fallback. The bundled
+    file has "Cape Verde" but not "Cabo Verde" -- the official 2013 UN/ISO
+    rename that country-files.com's live data has since adopted but
+    pyhamtools' bundled mapping has never been updated for. The FIRST such
+    mismatch aborts parsing the ENTIRE remaining country database, not just
+    the one affected entry -- explaining why the real-world symptom was a
+    total, deterministic beam-heading outage (every callsign, survives a
+    container restart), not an isolated one.
+
+    Confirmed via direct inspection of pyhamtools 0.13.1's real source, and
+    via its own real GitHub history (a prior commit, "fixed two country IDs
+    in Countryfilemapping - Brazil and Dominican Republic", shows the exact
+    same failure mode already fixed once for other countries) -- and
+    confirmed NOT yet fixed even in the latest unreleased commit as of
+    2026-09-07. Reported upstream separately; see the repo's GitHub issue
+    for detail, not duplicated here.
+
+    This patch changes exactly one line's behavior from the original method
+    (a straight copy otherwise): the ADIF lookup uses mapping.get(name, 0)
+    instead of a raw mapping[name] lookup, so ONE missing entry gets ADIF=0
+    (a real "unknown" sentinel) instead of crashing the whole parse. DXMon
+    never actually consumes this ADIF/DXCC number for anything -- entity
+    matching is entirely by HamAlert's own resolved name (see
+    _find_last_spot_for_entity's own docstring) -- only lat/lon matters for
+    beam heading, and that field is set correctly for the affected entry
+    regardless. A warning is logged the first time a given name is missing,
+    so a genuinely new future mismatch stays visible rather than silently
+    masked forever.
+
+    Tested directly against the real installed pyhamtools before deploying
+    this: confirmed the original method crashes on a synthetic "Cabo Verde"
+    entry exactly as the real bug does, confirmed this patched version
+    doesn't crash and preserves the entry's real lat/lon, and confirmed a
+    normal, present mapping entry still resolves its real ADIF number
+    unaffected.
+
+    Real, accepted maintenance cost: this duplicates ~50 lines of
+    pyhamtools' own internal parsing logic. Contained by the fact that this
+    project already pins pyhamtools==0.13.0 exactly (requirements.txt) --
+    this method is effectively frozen for as long as that pin holds, so this
+    duplicate can't silently drift out of sync with a real upstream change
+    without the project's own dependency-pinning discipline already calling
+    attention to a version bump first."""
+    import plistlib
+
+    def _patched_parse_country_file(self, cty_file, country_mapping_filename=None):
+        cty_list = None
+        exceptions = {}
+        prefixes = {}
+        exceptions_index = {}
+        prefixes_index = {}
+        exceptions_counter = 0
+        prefixes_counter = 0
+        mapping = None
+
+        with open(country_mapping_filename, "r") as f:
+            mapping = json.loads(f.read())
+
+        with open(cty_file, 'rb') as f:
+            try:
+                cty_list = plistlib.load(f)
+            except AttributeError:
+                cty_list = plistlib.readPlist(cty_file)
+
+        warned_names = set()
+
+        for item in cty_list:
+            entry = {}
+            call = str(item)
+            country_name = str(cty_list[item]["Country"])
+            entry[const.COUNTRY] = country_name
+            if mapping:
+                if country_name in mapping:
+                    entry[const.ADIF] = int(mapping[country_name])
+                else:
+                    entry[const.ADIF] = 0
+                    if country_name not in warned_names:
+                        log.warning(
+                            "countryfilemapping.json has no entry for %r -- using "
+                            "ADIF=0 as a safe fallback (lat/lon/CQ-zone/continent "
+                            "are unaffected; DXMon doesn't use ADIF for anything). "
+                            "Worth checking if this is a new/renamed entity, same "
+                            "class of issue as the 2026-09-07 Cabo Verde fix.",
+                            country_name,
+                        )
+                        warned_names.add(country_name)
+            entry[const.CQZ] = int(cty_list[item]["CQZone"])
+            entry[const.ITUZ] = int(cty_list[item]["ITUZone"])
+            entry[const.CONTINENT] = str(cty_list[item]["Continent"])
+            entry[const.LATITUDE] = float(cty_list[item]["Latitude"])
+            entry[const.LONGITUDE] = float(cty_list[item]["Longitude"]) * (-1)
+
+            if cty_list[item]["ExactCallsign"]:
+                if call in exceptions_index.keys():
+                    exceptions_index[call].append(exceptions_counter)
+                else:
+                    exceptions_index[call] = [exceptions_counter]
+                exceptions[exceptions_counter] = entry
+                exceptions_counter += 1
+            else:
+                if call in prefixes_index.keys():
+                    prefixes_index[call].append(prefixes_counter)
+                else:
+                    prefixes_index[call] = [prefixes_counter]
+                prefixes[prefixes_counter] = entry
+                prefixes_counter += 1
+
+        return {
+            "prefixes": prefixes,
+            "exceptions": exceptions,
+            "prefixes_index": prefixes_index,
+            "exceptions_index": exceptions_index,
+        }
+
+    LookupLib_cls._parse_country_file = _patched_parse_country_file
+
+
 def _init_beam_heading():
     """Lazily initializes pyhamtools' country-file lookup (downloads/caches the
     database once at first use, not per-request -- matches the project's established
@@ -858,7 +982,13 @@ def _init_beam_heading():
         return
     try:
         from pyhamtools import LookupLib, Callinfo
+        from pyhamtools.consts import LookupConventions as const
         from pyhamtools.locator import locator_to_latlong
+
+        # Real bug fix, 2026-09-07 -- see _patch_pyhamtools_country_mapping's own
+        # docstring for the full investigation. Applied once, before the first
+        # LookupLib is ever constructed.
+        _patch_pyhamtools_country_mapping(LookupLib, const)
 
         _lookuplib = LookupLib(lookuptype="countryfile")
         _callinfo = Callinfo(_lookuplib)

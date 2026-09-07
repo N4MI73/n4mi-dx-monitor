@@ -6,6 +6,9 @@
 #define DXMON_WATCHED_PATH  "/api/dxmon/watched"
 #define DXMON_NEEDED_PATH   "/api/dxmon/needed"
 #define DXMON_PREVIEW_STATUS_PATH  "/api/preview/status"
+// Added 2026-09-06 for the Category Activity Feed drill-down screen.
+#define DXMON_ACTIVITY_WATCHED_PATH  "/api/dxmon/activity/watched"
+#define DXMON_ACTIVITY_NEEDED_PATH   "/api/dxmon/activity/needed"
 
 #define WIFI_CONNECT_TIMEOUT_MS  15000
 #define LIVE_FETCH_INTERVAL_MS   60000
@@ -35,3 +38,6 @@
 // the first real value picked for the new shape, not yet load-tested against a
 // larger curated list -- raise it if Dan's real list ever approaches it.
 #define MAX_NEEDED_ENTRIES   30
+// Added 2026-09-06 -- matches the backend's own [:20] cap on both activity feed
+// endpoints (/api/dxmon/activity/watched and .../needed).
+#define MAX_ACTIVITY_SPOTS   20
