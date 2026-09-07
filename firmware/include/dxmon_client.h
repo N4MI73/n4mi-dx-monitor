@@ -159,6 +159,72 @@ struct ActivityData {
 bool dxmon_fetch_activity(bool is_needed, ActivityData &out);
 
 /**
+ * Single-Target Spot History (2026-09-08) -- up to the last 10 real spots
+ * for one specific target, fed by /api/dxmon/history/callsign/<callsign> or
+ * .../needed/<needed_id>. Unlike the Category Activity Feed, this IS backed
+ * by the persistent spot_history.json store -- a narrow, single-target
+ * query is exactly the case HamAlert's shared ~100-spot live buffer can't
+ * reliably answer (a rarer hit could easily have aged out).
+ *
+ * Two variants share this one struct, populated according to which fetch
+ * function was called:
+ * - Callsign-level (dxmon_fetch_history_callsign): opened from an
+ *   individual-spot tap (Category Activity Feed row), or a Watched
+ *   roster-row tap (a Watched entry already is one fixed callsign). `callsign`
+ *   and the top-level `has_beam`/`heading_deg`/`distance_km` are populated;
+ *   `entity`/`band`/`mode` are empty. Every spot shares the same callsign, so
+ *   beam heading is only computed once, at the top level.
+ * - Entity-level (dxmon_fetch_history_needed): opened from a Needed
+ *   roster-row tap. `entity`/`band`/`mode` are populated; `callsign` and the
+ *   top-level beam fields are empty. An entity/slot can be worked by several
+ *   different callsigns over time (confirmed live -- Singapore has both
+ *   9V1XX and 9V1SH real spots), so each HistorySpot carries its OWN beam
+ *   heading rather than sharing one top-level value.
+ */
+struct HistorySpot {
+    char callsign[16];
+    char band[8];
+    char mode[16];
+    char frequency[16];
+    char received_at[32];
+    bool has_beam;
+    float heading_deg;
+    int distance_km;
+};
+
+struct HistoryData {
+    HistorySpot spots[MAX_HISTORY_SPOTS];
+    int count;
+    char updated[32];
+
+    // Header context -- exactly one of these two groups is populated,
+    // depending on which fetch function was called (see struct comment above).
+    char callsign[16];    // callsign-level only
+    char entity[48];      // entity-level only
+    char band[24];        // entity-level only -- may hold multiple values, e.g. "17M, 15M"
+    char mode[16];        // entity-level only
+
+    bool has_beam;         // top-level beam -- callsign-level only
+    float heading_deg;
+    int distance_km;
+};
+
+/**
+ * Fetches the callsign-level Single-Target Spot History. `callsign` is
+ * URL-appended to DXMON_HISTORY_CALLSIGN_PATH -- caller is responsible for
+ * passing a value safe to appear directly in a URL path segment (a real
+ * callsign, e.g. "5A1AL", always is).
+ */
+bool dxmon_fetch_history_callsign(const char *callsign, HistoryData &out);
+
+/**
+ * Fetches the entity-level Single-Target Spot History. `needed_id` is
+ * URL-appended to DXMON_HISTORY_NEEDED_PATH -- this is always a Needed
+ * entry's own stable id (e.g. "8ee29de95330"), never user-entered text.
+ */
+bool dxmon_fetch_history_needed(const char *needed_id, HistoryData &out);
+
+/**
  * Fetches and parses the current watched list. Parses into a local temporary
  * first and only commits to `out` on full success -- matches the series-wide
  * "never let a partial or malformed response corrupt existing good data"

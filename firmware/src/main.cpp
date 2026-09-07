@@ -189,6 +189,13 @@ static void open_activity_feed(bool is_needed);
 static void watched_panel_click_cb(lv_event_t *e) { open_activity_feed(false); }
 static void needed_panel_click_cb(lv_event_t *e) { open_activity_feed(true); }
 
+// Forward declarations for the Single-Target Spot History screen (2026-09-08)
+// -- full implementation lives after open_activity_feed(), but
+// make_activity_row() (which appears before that) needs to call the
+// callsign-level opener for its own "tap an individual spot" behavior.
+static void open_history_callsign(const char *callsign);
+static void open_history_needed(const char *needed_id);
+
 // ---------------------------------------------------------------------------
 // Small building blocks, shared across panels.
 // ---------------------------------------------------------------------------
@@ -1248,10 +1255,38 @@ static void activity_back_event_cb(lv_event_t *e)
     lv_scr_load(screens[0]);
 }
 
+// Added 2026-09-08: each row needs a stable pointer to its own callsign that
+// survives until the tap actually fires (rows are rebuilt fresh every
+// refresh, so a pointer into a local/temporary string wouldn't survive).
+// A static pool sized to MAX_ACTIVITY_SPOTS, refilled each rebuild, does the
+// job -- old rows are always destroyed via lv_obj_clean() before new ones
+// are built, so stale entries are never actually referenced.
+static char activity_row_callsign_pool[MAX_ACTIVITY_SPOTS][16];
+
+static void activity_row_click_cb(lv_event_t *e)
+{
+    const char *callsign = (const char *)lv_event_get_user_data(e);
+    open_history_callsign(callsign);
+}
+
 static void make_activity_row(lv_obj_t *container, int index, const ActivitySpot &s, bool is_needed)
 {
     int y = index * 84;  // 76px row + 8px gap, matching the roster rows' own convention
     lv_obj_t *card = make_row_card(container, y, false);
+
+    // Added 2026-09-08: tapping a row (an individual real spot) opens that
+    // callsign's own Single-Target Spot History. Rows have small badges that
+    // are clickable-by-default lv_obj_create() widgets, same as the Overview
+    // panels that needed an overlay fix -- but here they only cover a small
+    // corner of the row rather than its entire surface, so a direct handler
+    // on the row itself is accepted as low-risk (a tap precisely on a badge
+    // could fail to register, a normal tap elsewhere on the row will not).
+    if (index < MAX_ACTIVITY_SPOTS) {
+        strncpy(activity_row_callsign_pool[index], s.callsign, 15);
+        activity_row_callsign_pool[index][15] = '\0';
+        lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(card, activity_row_click_cb, LV_EVENT_CLICKED, activity_row_callsign_pool[index]);
+    }
 
     int detail_y = 12;
     if (is_needed) {
@@ -1405,6 +1440,288 @@ static void open_activity_feed(bool is_needed)
     }
 }
 
+// ---------------------------------------------------------------------------
+// Single-Target Spot History -- full-screen drill-down (2026-09-08). One
+// shared screen, two data-source variants:
+//   - Callsign-level: opened from an individual-spot tap (a Category
+//     Activity Feed row) or a Watched roster-row tap (a Watched entry
+//     already is one fixed callsign). Header shows the callsign plus its
+//     entity and beam heading, computed once since every spot shares it.
+//   - Entity-level: opened from a Needed roster-row tap. Header shows the
+//     entity/slot instead; each row shows its own callsign and beam
+//     heading, since a slot can be worked by several different callsigns.
+// Full-screen takeover with a back arrow, no bottom tab bar, matching the
+// Category Activity Feed's own established convention. Built from the
+// approved dxmon_single_target_history_mockup.svg.
+// ---------------------------------------------------------------------------
+static lv_obj_t *history_screen = NULL;
+static lv_obj_t *history_category_lbl = NULL;
+static lv_obj_t *history_title_lbl = NULL;
+static lv_obj_t *history_subtitle_lbl = NULL;
+static lv_obj_t *history_beam_lbl = NULL;
+static lv_obj_t *history_status_lbl = NULL;
+static lv_obj_t *history_container = NULL;
+static lv_obj_t *history_footer_lbl = NULL;
+
+static void history_back_event_cb(lv_event_t *e)
+{
+    lv_scr_load(screens[0]);
+}
+
+static void make_history_row(lv_obj_t *container, int index, const HistorySpot &s, bool show_callsign)
+{
+    // Entity-level rows need more height to fit the per-row callsign+beam
+    // line (band/mode can vary per hit); callsign-level rows don't need it,
+    // since the callsign and its beam are already shown once in the header.
+    int row_height = show_callsign ? 72 : 46;
+    int y = index * (row_height + 6);
+    lv_obj_t *card = make_row_card(container, y, index % 2 == 1, row_height);
+
+    char mode_buf[16];
+    strncpy(mode_buf, s.mode, sizeof(mode_buf) - 1);
+    mode_buf[sizeof(mode_buf) - 1] = '\0';
+    to_upper_inplace(mode_buf);
+
+    lv_obj_t *badge = lv_obj_create(card);
+    lv_obj_remove_style_all(badge);
+    lv_obj_set_size(badge, 52, 24);
+    lv_obj_set_pos(badge, 20, 11);
+    lv_obj_set_style_bg_color(badge, COLOR_BADGE_BLUE_BG, 0);
+    lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(badge, COLOR_ACCENT_BLUE, 0);
+    lv_obj_set_style_border_width(badge, 1, 0);
+    lv_obj_set_style_radius(badge, 5, 0);
+    lv_obj_t *badge_lbl = lv_label_create(badge);
+    lv_label_set_text(badge_lbl, mode_buf);
+    lv_obj_set_style_text_font(badge_lbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(badge_lbl, COLOR_BADGE_BLUE_TX, 0);
+    lv_obj_center(badge_lbl);
+
+    char freq_buf[24];
+    snprintf(freq_buf, sizeof(freq_buf), "%s MHz", s.frequency);
+    make_label(card, freq_buf, &lv_font_montserrat_14, COLOR_TEXT_PRIMARY, 90, 11);
+
+    char band_buf[8];
+    strncpy(band_buf, s.band, sizeof(band_buf) - 1);
+    band_buf[sizeof(band_buf) - 1] = '\0';
+    to_upper_inplace(band_buf);
+    make_label(card, band_buf, &lv_font_montserrat_12, COLOR_TEXT_MUTED, 280, 14);
+
+    char when_buf[24];
+    format_short_datetime(s.received_at, when_buf, sizeof(when_buf));
+    lv_obj_t *when_lbl = lv_label_create(card);
+    lv_label_set_text(when_lbl, when_buf);
+    lv_obj_set_style_text_font(when_lbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(when_lbl, COLOR_TEXT_PRIMARY, 0);
+    lv_obj_align(when_lbl, LV_ALIGN_TOP_RIGHT, -20, 14);
+
+    if (show_callsign) {
+        // Entity-level only -- bold/bright callsign matching the styling
+        // already established on the Overview panel, with beam inline to
+        // its right (measured after layout, same technique used elsewhere).
+        lv_obj_t *cs_shadow = lv_label_create(card);
+        lv_label_set_text(cs_shadow, s.callsign);
+        lv_obj_set_style_text_font(cs_shadow, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(cs_shadow, COLOR_ACCENT_AMBER, 0);
+        lv_obj_set_pos(cs_shadow, 21, 41);
+
+        lv_obj_t *cs_main = lv_label_create(card);
+        lv_label_set_text(cs_main, s.callsign);
+        lv_obj_set_style_text_font(cs_main, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(cs_main, COLOR_ACCENT_AMBER, 0);
+        lv_obj_set_pos(cs_main, 20, 41);
+
+        char beam_buf[32];
+        format_beam_suffix_raw(s.has_beam, s.heading_deg, s.distance_km, beam_buf, sizeof(beam_buf));
+        if (beam_buf[0] != '\0') {
+            lv_obj_t *beam_lbl = lv_label_create(card);
+            lv_label_set_text(beam_lbl, beam_buf);
+            lv_obj_set_style_text_font(beam_lbl, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_color(beam_lbl, COLOR_TEXT_MUTED, 0);
+            lv_obj_update_layout(cs_main);
+            lv_obj_align_to(beam_lbl, cs_main, LV_ALIGN_OUT_RIGHT_MID, 10, 2);
+        }
+    }
+}
+
+static lv_obj_t *make_screen_single_target_history(void)
+{
+    lv_obj_t *scr = make_screen();
+
+    lv_obj_t *header = lv_obj_create(scr);
+    lv_obj_remove_style_all(header);
+    lv_obj_set_size(header, 800, 86);
+    lv_obj_set_pos(header, 0, 0);
+    lv_obj_set_style_bg_color(header, COLOR_HEADER_BG, 0);
+    lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
+
+    lv_obj_t *back_btn = lv_btn_create(header);
+    lv_obj_remove_style_all(back_btn);
+    lv_obj_set_size(back_btn, 56, 56);
+    lv_obj_set_pos(back_btn, 8, 4);
+    lv_obj_set_style_bg_opa(back_btn, LV_OPA_TRANSP, 0);
+    lv_obj_add_event_cb(back_btn, history_back_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *back_lbl = lv_label_create(back_btn);
+    lv_label_set_text(back_lbl, LV_SYMBOL_LEFT);
+    lv_obj_set_style_text_font(back_lbl, &lv_font_montserrat_26, 0);
+    lv_obj_set_style_text_color(back_lbl, COLOR_TEXT_PRIMARY, 0);
+    lv_obj_center(back_lbl);
+
+    history_category_lbl = lv_label_create(header);
+    lv_label_set_text(history_category_lbl, "");
+    lv_obj_set_style_text_font(history_category_lbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(history_category_lbl, COLOR_ACCENT_BLUE, 0);
+    lv_obj_set_pos(history_category_lbl, 64, 8);
+
+    history_title_lbl = lv_label_create(header);
+    lv_label_set_text(history_title_lbl, "--");
+    lv_obj_set_style_text_font(history_title_lbl, &lv_font_montserrat_26, 0);
+    lv_obj_set_style_text_color(history_title_lbl, COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_pos(history_title_lbl, 64, 26);
+
+    history_subtitle_lbl = lv_label_create(header);
+    lv_label_set_text(history_subtitle_lbl, "");
+    lv_obj_set_style_text_font(history_subtitle_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(history_subtitle_lbl, COLOR_TEXT_MUTED, 0);
+    lv_label_set_long_mode(history_subtitle_lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(history_subtitle_lbl, 520);
+    lv_obj_set_pos(history_subtitle_lbl, 64, 60);
+
+    history_beam_lbl = lv_label_create(header);
+    lv_label_set_text(history_beam_lbl, "");
+    lv_obj_set_style_text_font(history_beam_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(history_beam_lbl, COLOR_ACCENT_BLUE, 0);
+    lv_obj_align(history_beam_lbl, LV_ALIGN_TOP_RIGHT, -24, 60);
+
+    history_status_lbl = lv_label_create(header);
+    lv_label_set_text(history_status_lbl, "LOADING");
+    lv_obj_set_style_text_font(history_status_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(history_status_lbl, COLOR_BADGE_TEXT, 0);
+    lv_obj_align(history_status_lbl, LV_ALIGN_TOP_RIGHT, -24, 8);
+
+    make_divider(scr, 0, 86, 800);
+
+    history_container = lv_obj_create(scr);
+    lv_obj_remove_style_all(history_container);
+    lv_obj_set_pos(history_container, 16, 94);
+    lv_obj_set_size(history_container, 768, 346);
+    lv_obj_set_style_bg_opa(history_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_scroll_dir(history_container, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(history_container, LV_SCROLLBAR_MODE_AUTO);
+
+    // Honest data-limit footer, matching the approved mockup -- shown only
+    // when fewer than MAX_HISTORY_SPOTS spots are actually available.
+    history_footer_lbl = lv_label_create(scr);
+    lv_label_set_text(history_footer_lbl, "");
+    lv_obj_set_style_text_font(history_footer_lbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(history_footer_lbl, COLOR_TEXT_MUTED, 0);
+    lv_obj_align(history_footer_lbl, LV_ALIGN_BOTTOM_MID, 0, -8);
+
+    return scr;
+}
+
+static void render_history_data(const HistoryData &data, bool is_needed)
+{
+    lv_obj_clean(history_container);
+    if (data.count == 0) {
+        lv_obj_t *empty_lbl = lv_label_create(history_container);
+        lv_label_set_text(empty_lbl, "No real spots recorded yet for this target.");
+        lv_obj_set_style_text_font(empty_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(empty_lbl, COLOR_TEXT_MUTED, 0);
+        lv_obj_set_pos(empty_lbl, 20, 20);
+    } else {
+        for (int i = 0; i < data.count; i++) {
+            make_history_row(history_container, i, data.spots[i], is_needed);
+        }
+    }
+
+    if (data.count > 0 && data.count < MAX_HISTORY_SPOTS) {
+        char footer_buf[48];
+        snprintf(footer_buf, sizeof(footer_buf), "Showing %d of last %d -- older spots not available",
+                 data.count, MAX_HISTORY_SPOTS);
+        lv_label_set_text(history_footer_lbl, footer_buf);
+    } else {
+        lv_label_set_text(history_footer_lbl, "");
+    }
+}
+
+static void open_history_callsign(const char *callsign)
+{
+    lv_label_set_text(history_category_lbl, "CALLSIGN -- LAST 10 SPOTS");
+    lv_label_set_text(history_title_lbl, callsign);
+    lv_label_set_text(history_subtitle_lbl, "");
+    lv_label_set_text(history_beam_lbl, "");
+    lv_label_set_text(history_status_lbl, "LOADING");
+    lv_obj_set_style_text_color(history_status_lbl, COLOR_BADGE_TEXT, 0);
+    lv_label_set_text(history_footer_lbl, "");
+    lv_obj_clean(history_container);
+    lv_scr_load(history_screen);
+
+    static HistoryData data;
+    if (dxmon_fetch_history_callsign(callsign, data)) {
+        lv_label_set_text(history_status_lbl, "LIVE");
+        lv_obj_set_style_text_color(history_status_lbl, COLOR_STATUS_GREEN, 0);
+        char beam_buf[32];
+        format_beam_suffix_raw(data.has_beam, data.heading_deg, data.distance_km, beam_buf, sizeof(beam_buf));
+        lv_label_set_text(history_beam_lbl, beam_buf);
+        render_history_data(data, false);
+    } else {
+        lv_label_set_text(history_status_lbl, "OFFLINE");
+        lv_obj_set_style_text_color(history_status_lbl, COLOR_TEXT_MUTED, 0);
+        lv_obj_t *err_lbl = lv_label_create(history_container);
+        lv_label_set_text(err_lbl, "Couldn't load spot history -- check connection.");
+        lv_obj_set_style_text_font(err_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(err_lbl, COLOR_TEXT_MUTED, 0);
+        lv_obj_set_pos(err_lbl, 20, 20);
+    }
+}
+
+static void open_history_needed(const char *needed_id)
+{
+    lv_label_set_text(history_category_lbl, "NEEDED -- SLOT HISTORY");
+    lv_label_set_text(history_title_lbl, "--");
+    lv_label_set_text(history_subtitle_lbl, "");
+    lv_label_set_text(history_beam_lbl, "");
+    lv_label_set_text(history_status_lbl, "LOADING");
+    lv_obj_set_style_text_color(history_status_lbl, COLOR_BADGE_TEXT, 0);
+    lv_label_set_text(history_footer_lbl, "");
+    lv_obj_clean(history_container);
+    lv_scr_load(history_screen);
+
+    static HistoryData data;
+    if (dxmon_fetch_history_needed(needed_id, data)) {
+        lv_label_set_text(history_status_lbl, "LIVE");
+        lv_obj_set_style_text_color(history_status_lbl, COLOR_STATUS_GREEN, 0);
+        lv_label_set_text(history_title_lbl, data.entity);
+        char subtitle_buf[64];
+        if (data.band[0] != '\0' || data.mode[0] != '\0') {
+            snprintf(subtitle_buf, sizeof(subtitle_buf), "%s%s%s",
+                     data.band, (data.band[0] != '\0' && data.mode[0] != '\0') ? " " : "", data.mode);
+            to_upper_inplace(subtitle_buf);
+        } else {
+            snprintf(subtitle_buf, sizeof(subtitle_buf), "WHOLE ENTITY -- ANY BAND/MODE");
+        }
+        lv_label_set_text(history_subtitle_lbl, subtitle_buf);
+        // No top-level beam here -- entity-level rows carry their own,
+        // since different rows can be different callsigns (see struct comment).
+        render_history_data(data, true);
+    } else {
+        lv_label_set_text(history_status_lbl, "OFFLINE");
+        lv_obj_set_style_text_color(history_status_lbl, COLOR_TEXT_MUTED, 0);
+        lv_obj_t *err_lbl = lv_label_create(history_container);
+        lv_label_set_text(err_lbl, "Couldn't load spot history -- check connection or this entry may have been removed.");
+        lv_obj_set_style_text_font(err_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(err_lbl, COLOR_TEXT_MUTED, 0);
+        lv_label_set_long_mode(err_lbl, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(err_lbl, 700);
+        lv_obj_set_pos(err_lbl, 20, 20);
+    }
+}
+
+// Same pool pattern as activity_row_callsign_pool above, sized for
+// MAX_WATCHED_ENTRIES.
+static char watched_row_callsign_pool[MAX_WATCHED_ENTRIES][16];
+
 static void make_watched_row(lv_obj_t *container, int index, const WatchedEntry &e, const char *now_iso)
 {
     int y = index * 84;  // 76px row + 8px gap, matching the approved mockup
@@ -1419,6 +1736,17 @@ static void make_watched_row(lv_obj_t *container, int index, const WatchedEntry 
     bool no_adxo = !active && !upcoming && !waiting;
 
     lv_obj_t *card = make_row_card(container, y, !active);
+
+    // Added 2026-09-08: tapping a Watched roster row opens that entry's own
+    // callsign-level Single-Target Spot History -- a Watched entry already
+    // IS one fixed callsign, so this is the natural mapping. Same pool/
+    // click-handler pattern as the Activity Feed rows above.
+    if (index < MAX_WATCHED_ENTRIES) {
+        strncpy(watched_row_callsign_pool[index], e.callsign, 15);
+        watched_row_callsign_pool[index][15] = '\0';
+        lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(card, activity_row_click_cb, LV_EVENT_CLICKED, watched_row_callsign_pool[index]);
+    }
 
     lv_color_t dot_color = active ? COLOR_STATUS_GREEN : COLOR_DOT_GRAY;
     lv_obj_t *dot = lv_obj_create(card);
@@ -1568,6 +1896,17 @@ static lv_obj_t *make_screen_watched(void)
 static lv_obj_t *needed_roster_container = NULL;
 static lv_obj_t *needed_tab_status_lbl = NULL;
 
+// Same pool pattern as the two above, sized for MAX_NEEDED_ENTRIES, keyed by
+// the entry's own stable id rather than a callsign (see click-wiring comment
+// in make_target_row below).
+static char needed_row_id_pool[MAX_NEEDED_ENTRIES][16];
+
+static void needed_row_click_cb(lv_event_t *e)
+{
+    const char *needed_id = (const char *)lv_event_get_user_data(e);
+    open_history_needed(needed_id);
+}
+
 static void make_target_row(lv_obj_t *container, int index, const NeededEntry &t)
 {
     // Row grown 76 -> 96px (2026-09-05) to fit the new callsign+beam line below --
@@ -1582,6 +1921,17 @@ static void make_target_row(lv_obj_t *container, int index, const NeededEntry &t
     // else: never spotted -- the common case for a freshly-added entry.
 
     lv_obj_t *card = make_row_card(container, y, !live, row_height);
+
+    // Added 2026-09-08: tapping a Needed roster row opens that entry's
+    // entity-level Single-Target Spot History -- uses the entry's own
+    // stable id (not its entity name, which could theoretically collide or
+    // change), matching the same key spot_history.json itself uses server-side.
+    if (index < MAX_NEEDED_ENTRIES) {
+        strncpy(needed_row_id_pool[index], t.id, 15);
+        needed_row_id_pool[index][15] = '\0';
+        lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(card, needed_row_click_cb, LV_EVENT_CLICKED, needed_row_id_pool[index]);
+    }
 
     lv_color_t dot_color = live ? COLOR_STATUS_GREEN : (seen ? COLOR_ACCENT_AMBER : COLOR_DOT_GRAY);
     lv_obj_t *dot = lv_obj_create(card);
@@ -1855,6 +2205,7 @@ void setup()
     screens[2] = make_screen_needed();
     screens[3] = make_screen_config();
     activity_feed_screen = make_screen_activity_feed();
+    history_screen = make_screen_single_target_history();
 
     for (int i = 0; i < 4; i++) {
         create_tab_bar(screens[i], i);

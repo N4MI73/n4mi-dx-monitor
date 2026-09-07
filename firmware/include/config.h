@@ -9,6 +9,11 @@
 // Added 2026-09-06 for the Category Activity Feed drill-down screen.
 #define DXMON_ACTIVITY_WATCHED_PATH  "/api/dxmon/activity/watched"
 #define DXMON_ACTIVITY_NEEDED_PATH   "/api/dxmon/activity/needed"
+// Added 2026-09-08 for the Single-Target Spot History drill-down screen --
+// two variants sharing one screen design, callsign-level and entity-level.
+// Path takes the callsign/id as a URL suffix, appended at fetch time.
+#define DXMON_HISTORY_CALLSIGN_PATH  "/api/dxmon/history/callsign/"
+#define DXMON_HISTORY_NEEDED_PATH    "/api/dxmon/history/needed/"
 
 #define WIFI_CONNECT_TIMEOUT_MS  15000
 #define LIVE_FETCH_INTERVAL_MS   60000
@@ -41,3 +46,6 @@
 // Added 2026-09-06 -- matches the backend's own [:20] cap on both activity feed
 // endpoints (/api/dxmon/activity/watched and .../needed).
 #define MAX_ACTIVITY_SPOTS   20
+// Added 2026-09-08 -- matches spot_history.json's own SPOT_HISTORY_MAX cap
+// (server-side) for the Single-Target Spot History screen.
+#define MAX_HISTORY_SPOTS    10

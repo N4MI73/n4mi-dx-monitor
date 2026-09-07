@@ -272,6 +272,162 @@ bool dxmon_fetch_activity(bool is_needed, ActivityData &out)
     return true;
 }
 
+static void parse_history_spot(HistorySpot &s, JsonVariant item)
+{
+    copy_field(s.callsign, sizeof(s.callsign), item["callsign"]);
+    copy_field(s.band, sizeof(s.band), item["band"]);
+    copy_field(s.mode, sizeof(s.mode), item["mode"]);
+    copy_field(s.frequency, sizeof(s.frequency), item["frequency"]);
+    copy_field(s.received_at, sizeof(s.received_at), item["received_at"]);
+
+    JsonVariant beam = item["beam"];
+    if (beam.isNull()) {
+        s.has_beam = false;
+        s.heading_deg = 0.0f;
+        s.distance_km = 0;
+    } else {
+        s.has_beam = true;
+        s.heading_deg = beam["heading_deg"] | 0.0f;
+        s.distance_km = beam["distance_km"] | 0;
+    }
+}
+
+// Known, low-priority limitation, not yet handled on either side: a callsign
+// containing a literal "/" (e.g. a portable suffix like "W1AW/M") would break
+// Flask's default URL routing on the server, since its <callsign> converter
+// stops matching at the first "/". Not seen in any real HamAlert-resolved
+// callsign data across this whole project's history so far -- DXpedition/
+// rare-entity spots consistently haven't used this format in practice.
+
+bool dxmon_fetch_history_callsign(const char *callsign, HistoryData &out)
+{
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("dxmon_fetch_history_callsign: Wi-Fi not connected");
+        return false;
+    }
+
+    HTTPClient http;
+    String url = String("http://") + DXMON_SERVER_HOST + ":" + DXMON_SERVER_PORT +
+                 DXMON_HISTORY_CALLSIGN_PATH + callsign;
+    http.begin(url);
+    int code = http.GET();
+    if (code != HTTP_CODE_OK) {
+        Serial.printf("dxmon_fetch_history_callsign: HTTP GET failed, code %d\n", code);
+        http.end();
+        return false;
+    }
+
+    String payload = http.getString();
+    http.end();
+
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, payload);
+    if (err) {
+        Serial.printf("dxmon_fetch_history_callsign: JSON parse failed: %s\n", err.c_str());
+        return false;
+    }
+
+    JsonArray arr = doc["spots"].as<JsonArray>();
+    if (arr.isNull()) {
+        Serial.println("dxmon_fetch_history_callsign: 'spots' field missing or not an array");
+        return false;
+    }
+
+    static HistoryData temp;
+    temp.count = 0;
+    copy_field(temp.updated, sizeof(temp.updated), doc["updated"]);
+    copy_field(temp.callsign, sizeof(temp.callsign), doc["callsign"]);
+    temp.entity[0] = '\0';
+    temp.band[0] = '\0';
+    temp.mode[0] = '\0';
+
+    JsonVariant beam = doc["beam"];
+    if (beam.isNull()) {
+        temp.has_beam = false;
+        temp.heading_deg = 0.0f;
+        temp.distance_km = 0;
+    } else {
+        temp.has_beam = true;
+        temp.heading_deg = beam["heading_deg"] | 0.0f;
+        temp.distance_km = beam["distance_km"] | 0;
+    }
+
+    for (JsonVariant item : arr) {
+        if (temp.count >= MAX_HISTORY_SPOTS) break;
+        parse_history_spot(temp.spots[temp.count], item);
+        temp.count++;
+    }
+
+    out = temp;
+    return true;
+}
+
+bool dxmon_fetch_history_needed(const char *needed_id, HistoryData &out)
+{
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("dxmon_fetch_history_needed: Wi-Fi not connected");
+        return false;
+    }
+
+    HTTPClient http;
+    String url = String("http://") + DXMON_SERVER_HOST + ":" + DXMON_SERVER_PORT +
+                 DXMON_HISTORY_NEEDED_PATH + needed_id;
+    http.begin(url);
+    int code = http.GET();
+    if (code != HTTP_CODE_OK) {
+        Serial.printf("dxmon_fetch_history_needed: HTTP GET failed, code %d\n", code);
+        http.end();
+        return false;
+    }
+
+    String payload = http.getString();
+    http.end();
+
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, payload);
+    if (err) {
+        Serial.printf("dxmon_fetch_history_needed: JSON parse failed: %s\n", err.c_str());
+        return false;
+    }
+
+    // Real edge case confirmed server-side: the Needed entry may have been
+    // removed from the curated list after this drill-down screen was
+    // opened. The server returns entity:null and an empty spots array
+    // rather than an HTTP error in that case -- treated as a fetch failure
+    // here too, so the screen shows its normal "couldn't load" state
+    // instead of a confusing blank target.
+    if (doc["entity"].isNull()) {
+        Serial.println("dxmon_fetch_history_needed: entity is null -- entry no longer exists");
+        return false;
+    }
+
+    JsonArray arr = doc["spots"].as<JsonArray>();
+    if (arr.isNull()) {
+        Serial.println("dxmon_fetch_history_needed: 'spots' field missing or not an array");
+        return false;
+    }
+
+    static HistoryData temp;
+    temp.count = 0;
+    copy_field(temp.updated, sizeof(temp.updated), doc["updated"]);
+    temp.callsign[0] = '\0';
+    copy_field(temp.entity, sizeof(temp.entity), doc["entity"]);
+    copy_field(temp.band, sizeof(temp.band), doc["band"]);
+    copy_field(temp.mode, sizeof(temp.mode), doc["mode"]);
+    temp.has_beam = false;
+    temp.heading_deg = 0.0f;
+    temp.distance_km = 0;
+
+    for (JsonVariant item : arr) {
+        if (temp.count >= MAX_HISTORY_SPOTS) break;
+        parse_history_spot(temp.spots[temp.count], item);
+        temp.count++;
+    }
+
+    out = temp;
+    return true;
+}
+
 bool dxmon_fetch_watched(WatchedData &out)
 {
     if (WiFi.status() != WL_CONNECTED) {

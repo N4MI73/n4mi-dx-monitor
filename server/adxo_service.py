@@ -1653,12 +1653,24 @@ def api_dxmon_history_needed(needed_id):
             "spots": [],
         })
     key = "needed:" + needed_id
+    # Real difference from the callsign-level endpoint: an entity/slot can be
+    # worked by several different callsigns over time (confirmed live --
+    # Singapore has both 9V1XX and 9V1SH real spots), so beam heading has to
+    # be computed per-spot here, not once at the top level. Each spot is
+    # copied (dict(spot, beam=...)) rather than mutated in place --
+    # _get_spot_history() returns the same dict objects actually stored in
+    # _spot_history, so mutating them directly would silently bake stale
+    # beam data into spot_history.json itself instead of computing it fresh
+    # on every request, the same mistake already caught once before for
+    # last_spot/last_seen (see _build_dxmon_needed's own comment).
+    spots = [dict(spot, beam=_get_heading_to_callsign(spot.get("callsign")))
+             for spot in _get_spot_history(key)]
     return jsonify({
         "updated": datetime.now(EASTERN).isoformat(),
         "entity": entry["entity"],
         "band": entry.get("band", ""),
         "mode": entry.get("mode", ""),
-        "spots": _get_spot_history(key),
+        "spots": spots,
     })
 
 
