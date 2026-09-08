@@ -1695,9 +1695,15 @@ def api_dxmon_activity_watched():
         if watched_callsigns & {spot_callsign, spot_full}:
             matches.append(_spot_info_from_entry(entry, spot))
     matches.sort(key=lambda s: s.get("received_at") or "", reverse=True)
+    # Beam computed only for the page actually returned, not every match
+    # found before sorting/capping -- matches can exceed 20 for a busy
+    # category.
+    page = matches[:20]
+    for info in page:
+        info["beam"] = _get_heading_to_callsign(info.get("callsign"))
     return jsonify({
         "updated": datetime.now(EASTERN).isoformat(),
-        "spots": matches[:20],
+        "spots": page,
     })
 
 
@@ -1721,21 +1727,30 @@ def api_dxmon_activity_needed():
         mode_filter = (n.get("mode") or "").strip().lower() or None
         band_set = {b.strip() for b in band_filter.split(",") if b.strip()} if band_filter else None
         mode_set = {m.strip() for m in mode_filter.split(",") if m.strip()} if mode_filter else None
-        filters.append((target, band_set, mode_set, n["entity"]))
+        # kind added -- the approved Category Feed mockup shows an
+        # ENTITY/SLOT badge per row, same derived logic _build_dxmon_needed()
+        # already uses for the roster.
+        filters.append((target, band_set, mode_set, n["entity"], _needed_entry_kind(n)))
 
     matches = []
     for entry in recent_spots:
         spot = entry.get("spot", {})
-        for target, band_set, mode_set, entity_display in filters:
+        for target, band_set, mode_set, entity_display, kind in filters:
             if _entity_band_mode_matches(spot, target, band_set, mode_set):
                 info = _spot_info_from_entry(entry, spot)
                 info["entity"] = entity_display
+                info["kind"] = kind
                 matches.append(info)
                 break  # one match against this spot is enough, don't double-count
     matches.sort(key=lambda s: s.get("received_at") or "", reverse=True)
+    # Beam computed only for the page actually returned, not every match
+    # found before sorting/capping.
+    page = matches[:20]
+    for info in page:
+        info["beam"] = _get_heading_to_callsign(info.get("callsign"))
     return jsonify({
         "updated": datetime.now(EASTERN).isoformat(),
-        "spots": matches[:20],
+        "spots": page,
     })
 
 
