@@ -1494,6 +1494,13 @@ def _get_last_seen(key):
 
 SPOT_HISTORY_FILE = os.environ.get("SPOT_HISTORY_FILE", "/app/data/spot_history.json")
 SPOT_HISTORY_MAX = 10
+# Real design decision (2026-09-08, Dan's own call): a spot beyond roughly a
+# day is unlikely to still be operationally relevant -- DXpeditions typically
+# move bands/modes frequently, so "last 10" reaching back days or weeks would
+# show stale, unhelpful data rather than anything actually actionable. Applied
+# in ADDITION to the count cap above, not instead of it -- a busy target still
+# won't grow the file unboundedly within that same 24-hour window either.
+SPOT_HISTORY_MAX_AGE_HOURS = 24
 
 _spot_history_lock = threading.Lock()
 _spot_history = {}  # key -> list of spot-info dicts, newest first, capped at SPOT_HISTORY_MAX
@@ -1534,7 +1541,11 @@ def _record_spot_history(key, spot_info):
     cycle can now record several different real spots for the same key at once (see the
     2026-09-06 fix in _build_dxmon_needed() below), potentially out of chronological
     order relative to what's already stored. Re-sorts after insertion to keep the list
-    newest-first regardless of insertion order. Capped at SPOT_HISTORY_MAX entries."""
+    newest-first regardless of insertion order. Capped at SPOT_HISTORY_MAX entries AND
+    SPOT_HISTORY_MAX_AGE_HOURS old -- both limits apply, whichever is more restrictive
+    for a given entry. Pruning happens here (at write time), not just when the history
+    endpoints are read, so spot_history.json itself stays lean on disk for
+    infrequently-hit targets rather than accumulating entries nobody will ever see."""
     new_received_at = spot_info.get("received_at") or ""
     with _spot_history_lock:
         history = _spot_history.setdefault(key, [])
@@ -1542,6 +1553,13 @@ def _record_spot_history(key, spot_info):
             return  # already recorded
         history.append(spot_info)
         history.sort(key=lambda s: s.get("received_at") or "", reverse=True)
+        # Same ISO-string lexicographic comparison technique already
+        # established for _watched_adxo_ended()'s own date check -- these are
+        # always the server's own consistently-formatted EASTERN-zoned
+        # timestamps, so a direct string comparison is exact without needing
+        # to parse either side into a real datetime object.
+        cutoff_iso = (datetime.now(EASTERN) - timedelta(hours=SPOT_HISTORY_MAX_AGE_HOURS)).isoformat()
+        history[:] = [s for s in history if (s.get("received_at") or "") >= cutoff_iso]
         del history[SPOT_HISTORY_MAX:]
         _save_spot_history()
 

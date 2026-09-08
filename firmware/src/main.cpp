@@ -992,10 +992,25 @@ static void update_overview_needed(const NeededData &data)
     lv_obj_add_flag(nw.t2_group, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(nw.t3_group, LV_OBJ_FLAG_HIDDEN);
 
-    char count_buf[40];
-    snprintf(count_buf, sizeof(count_buf), "%d entity - %d slot tracked", entity_count, slot_count);
-    lv_label_set_text(nw.t3_count, count_buf);
-    populate_ticker(data);
+    if (data.count == 0) {
+        // Added 2026-09-08: a genuinely empty curated list is a different
+        // real state from "entries exist, none spotted yet" -- Dan's own
+        // request, matching Watched's existing dedicated "Watchlist is
+        // empty" message, but going further with an actual nudge toward the
+        // curation page rather than just stating the list is empty. Reuses
+        // the same two Tier 3 widgets (count/ticker slots) rather than
+        // adding new ones, since it's the same visual layout either way.
+        lv_label_set_text(nw.t3_count, "Needed list is empty");
+        char nudge_buf[64];
+        snprintf(nudge_buf, sizeof(nudge_buf), "Curate entries at %s:%d/needed",
+                 DXMON_SERVER_HOST, DXMON_SERVER_PORT);
+        lv_label_set_text(nw.t3_ticker, nudge_buf);
+    } else {
+        char count_buf[40];
+        snprintf(count_buf, sizeof(count_buf), "%d entity - %d slot tracked", entity_count, slot_count);
+        lv_label_set_text(nw.t3_count, count_buf);
+        populate_ticker(data);
+    }
     needed_tier3_active = true;
 }
 
