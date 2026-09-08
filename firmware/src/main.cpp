@@ -12,6 +12,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <time.h>  // added 2026-09-08 for the spot-staleness helper (mktime/struct tm/difftime)
 #include <esp_display_panel.hpp>
 #include <esp_heap_caps.h>
 
@@ -88,6 +89,62 @@ static void format_short_datetime(const char *iso, char *out, size_t out_size)
 static void to_upper_inplace(char *s)
 {
     for (; *s; s++) *s = toupper((unsigned char)*s);
+}
+
+// Added 2026-09-08 for spot staleness visual treatment -- Dan's own real
+// operational insight: a spot much older than a few hours has almost
+// certainly moved on (different band/mode, or gone quiet), so an old spot
+// shouldn't visually compete with a fresh one. 4 hours, Dan's own figure
+// (given some leeway from an initial ~3-hour estimate). Named/scoped the
+// same way as PropMon's own STALE_DATA_THRESHOLD_MS for the identical idea
+// applied to a different kind of data.
+#define STALE_SPOT_THRESHOLD_SEC (4UL * 60UL * 60UL)
+
+/** Parses an ISO 8601 timestamp's date/time fields into epoch seconds via
+ * mktime(). Deliberately ignores the timezone offset suffix (e.g. "-04:00")
+ * entirely -- mktime() interprets the parsed fields as LOCAL time per the
+ * device's own C library timezone setting, which won't generally match the
+ * server's Eastern-time offset. This is fine and doesn't need fixing: every
+ * staleness check here only ever computes the DIFFERENCE between two
+ * timestamps parsed this exact same way (a spot's own received_at against
+ * the response's own "updated" field), so any constant bias from mktime()'s
+ * timezone handling cancels out in the subtraction -- the device never
+ * needs a correctly configured timezone, or even a real-time clock synced
+ * to now, for this to work correctly. Returns 0 on a malformed/too-short
+ * string, treated by the caller as "can't tell, don't flag as stale." */
+static time_t parse_iso8601_to_epoch(const char *iso)
+{
+    if (!iso || strlen(iso) < 19) return 0;
+    struct tm tm_val = {0};
+    tm_val.tm_year = (iso[0] - '0') * 1000 + (iso[1] - '0') * 100 +
+                      (iso[2] - '0') * 10 + (iso[3] - '0') - 1900;
+    tm_val.tm_mon  = (iso[5] - '0') * 10 + (iso[6] - '0') - 1;
+    tm_val.tm_mday = (iso[8] - '0') * 10 + (iso[9] - '0');
+    tm_val.tm_hour = (iso[11] - '0') * 10 + (iso[12] - '0');
+    tm_val.tm_min  = (iso[14] - '0') * 10 + (iso[15] - '0');
+    tm_val.tm_sec  = (iso[17] - '0') * 10 + (iso[18] - '0');
+    return mktime(&tm_val);
+}
+
+/** True if spot_received_at is more than STALE_SPOT_THRESHOLD_SEC older than
+ * response_updated_at (the screen's own "now" reference, from the same
+ * fetch). Returns false (never flags stale) if either timestamp fails to
+ * parse -- an unknown age is not evidence of staleness. */
+static bool spot_is_stale(const char *spot_received_at, const char *response_updated_at)
+{
+    time_t spot_time = parse_iso8601_to_epoch(spot_received_at);
+    time_t now_time = parse_iso8601_to_epoch(response_updated_at);
+    if (spot_time == 0 || now_time == 0) return false;
+    double elapsed = difftime(now_time, spot_time);
+    return elapsed > (double)STALE_SPOT_THRESHOLD_SEC;
+}
+
+/** Picks fresh_color normally, or COLOR_TEXT_MUTED when is_stale -- a small
+ * helper so staleness-aware coloring reads as a one-line substitution at
+ * each call site rather than an if/else block repeated everywhere. */
+static lv_color_t stale_aware_color(bool is_stale, lv_color_t fresh_color)
+{
+    return is_stale ? COLOR_TEXT_MUTED : fresh_color;
 }
 
 /** Formats "CALLSIGN -- N deg / N km" (or just "CALLSIGN" if no beam data),
@@ -872,8 +929,15 @@ static void update_overview_needed(const NeededData &data)
         // labels get the same text for the double-draw bold effect. The beam
         // suffix is positioned inline to the callsign's right each refresh,
         // since different callsigns render at different widths.
+        // 2026-09-08: dims to muted when the spot is more than 4 hours old,
+        // per Dan's own real operational point -- an old spot has almost
+        // certainly moved bands/modes or gone quiet by then.
+        bool t1_stale = spot_is_stale(t.last_spot.received_at, data.updated);
+        lv_color_t t1_cs_color = stale_aware_color(t1_stale, COLOR_ACCENT_AMBER);
         lv_label_set_text(nw.t1_spotted_shadow, t.last_spot.callsign);
+        lv_obj_set_style_text_color(nw.t1_spotted_shadow, t1_cs_color, 0);
         lv_label_set_text(nw.t1_spotted_callsign, t.last_spot.callsign);
+        lv_obj_set_style_text_color(nw.t1_spotted_callsign, t1_cs_color, 0);
         char beam_buf[32];
         format_beam_suffix(t.last_spot, beam_buf, sizeof(beam_buf));
         lv_label_set_text(nw.t1_spotted_beam, beam_buf);
@@ -908,8 +972,18 @@ static void update_overview_needed(const NeededData &data)
         lv_label_set_text(nw.t2_when, line_buf);
 
         // 2026-09-06: same split and inline-alignment as Tier 1 -- see comment there.
+        // 2026-09-08: same staleness dimming as Tier 1 -- Tier 2 exists
+        // specifically to show the last known hit when nothing's currently
+        // live, so it's often going to be the more likely of the two tiers
+        // to actually cross the staleness threshold in practice. Dims the
+        // "Last hit" timestamp line too, not just the callsign/beam.
+        bool t2_stale = spot_is_stale(t.last_seen.received_at, data.updated);
+        lv_obj_set_style_text_color(nw.t2_when, stale_aware_color(t2_stale, COLOR_TEXT_SECOND), 0);
+        lv_color_t t2_cs_color = stale_aware_color(t2_stale, COLOR_ACCENT_AMBER);
         lv_label_set_text(nw.t2_spotted_shadow, t.last_seen.callsign);
+        lv_obj_set_style_text_color(nw.t2_spotted_shadow, t2_cs_color, 0);
         lv_label_set_text(nw.t2_spotted_callsign, t.last_seen.callsign);
+        lv_obj_set_style_text_color(nw.t2_spotted_callsign, t2_cs_color, 0);
         char beam_buf[32];
         format_beam_suffix(t.last_seen, beam_buf, sizeof(beam_buf));
         lv_label_set_text(nw.t2_spotted_beam, beam_buf);
@@ -1468,7 +1542,7 @@ static void history_back_event_cb(lv_event_t *e)
     lv_scr_load(screens[0]);
 }
 
-static void make_history_row(lv_obj_t *container, int index, const HistorySpot &s, bool show_callsign)
+static void make_history_row(lv_obj_t *container, int index, const HistorySpot &s, bool show_callsign, const char *now_iso)
 {
     // Entity-level rows need more height to fit the per-row callsign+beam
     // line (band/mode can vary per hit); callsign-level rows don't need it,
@@ -1476,6 +1550,14 @@ static void make_history_row(lv_obj_t *container, int index, const HistorySpot &
     int row_height = show_callsign ? 72 : 46;
     int y = index * (row_height + 6);
     lv_obj_t *card = make_row_card(container, y, index % 2 == 1, row_height);
+
+    // Added 2026-09-08: Dan's own real operational point -- a spot more than
+    // a few hours old has almost certainly moved bands/modes or gone quiet,
+    // so it shouldn't visually compete with a genuinely fresh one. Dims this
+    // row's text rather than hiding it -- a sparse Watched callsign's only
+    // available history might be old, and that's still worth showing, just
+    // not worth emphasizing the same as something actionable right now.
+    bool stale = spot_is_stale(s.received_at, now_iso);
 
     char mode_buf[16];
     strncpy(mode_buf, s.mode, sizeof(mode_buf) - 1);
@@ -1494,12 +1576,12 @@ static void make_history_row(lv_obj_t *container, int index, const HistorySpot &
     lv_obj_t *badge_lbl = lv_label_create(badge);
     lv_label_set_text(badge_lbl, mode_buf);
     lv_obj_set_style_text_font(badge_lbl, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(badge_lbl, COLOR_BADGE_BLUE_TX, 0);
+    lv_obj_set_style_text_color(badge_lbl, stale_aware_color(stale, COLOR_BADGE_BLUE_TX), 0);
     lv_obj_center(badge_lbl);
 
     char freq_buf[24];
     snprintf(freq_buf, sizeof(freq_buf), "%s MHz", s.frequency);
-    make_label(card, freq_buf, &lv_font_montserrat_14, COLOR_TEXT_PRIMARY, 90, 11);
+    make_label(card, freq_buf, &lv_font_montserrat_14, stale_aware_color(stale, COLOR_TEXT_PRIMARY), 90, 11);
 
     char band_buf[8];
     strncpy(band_buf, s.band, sizeof(band_buf) - 1);
@@ -1512,23 +1594,26 @@ static void make_history_row(lv_obj_t *container, int index, const HistorySpot &
     lv_obj_t *when_lbl = lv_label_create(card);
     lv_label_set_text(when_lbl, when_buf);
     lv_obj_set_style_text_font(when_lbl, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(when_lbl, COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_color(when_lbl, stale_aware_color(stale, COLOR_TEXT_PRIMARY), 0);
     lv_obj_align(when_lbl, LV_ALIGN_TOP_RIGHT, -20, 14);
 
     if (show_callsign) {
         // Entity-level only -- bold/bright callsign matching the styling
         // already established on the Overview panel, with beam inline to
         // its right (measured after layout, same technique used elsewhere).
+        // Dims to muted (from its normal bright amber) when stale, same as
+        // every other element on this row.
+        lv_color_t cs_color = stale_aware_color(stale, COLOR_ACCENT_AMBER);
         lv_obj_t *cs_shadow = lv_label_create(card);
         lv_label_set_text(cs_shadow, s.callsign);
         lv_obj_set_style_text_font(cs_shadow, &lv_font_montserrat_16, 0);
-        lv_obj_set_style_text_color(cs_shadow, COLOR_ACCENT_AMBER, 0);
+        lv_obj_set_style_text_color(cs_shadow, cs_color, 0);
         lv_obj_set_pos(cs_shadow, 21, 41);
 
         lv_obj_t *cs_main = lv_label_create(card);
         lv_label_set_text(cs_main, s.callsign);
         lv_obj_set_style_text_font(cs_main, &lv_font_montserrat_16, 0);
-        lv_obj_set_style_text_color(cs_main, COLOR_ACCENT_AMBER, 0);
+        lv_obj_set_style_text_color(cs_main, cs_color, 0);
         lv_obj_set_pos(cs_main, 20, 41);
 
         char beam_buf[32];
@@ -1615,6 +1700,17 @@ static lv_obj_t *make_screen_single_target_history(void)
     lv_label_set_text(history_footer_lbl, "");
     lv_obj_set_style_text_font(history_footer_lbl, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(history_footer_lbl, COLOR_TEXT_MUTED, 0);
+    // Real bug found and fixed 2026-09-08: no width was ever set on this
+    // label, so it fell back to LVGL's own default fixed object width and
+    // clipped the real footer text mid-word ("...not availab") instead of
+    // sizing to fit it -- confirmed on real hardware. Width set generously
+    // wide (the longest real footer text, "Showing 9 of last 10 -- older
+    // spots not available", is well under 400px at this font size) with
+    // wrap as a safety net rather than another silent clip if this text is
+    // ever lengthened later.
+    lv_obj_set_width(history_footer_lbl, 600);
+    lv_label_set_long_mode(history_footer_lbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(history_footer_lbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(history_footer_lbl, LV_ALIGN_BOTTOM_MID, 0, -8);
 
     return scr;
@@ -1631,12 +1727,23 @@ static void render_history_data(const HistoryData &data, bool is_needed)
         lv_obj_set_pos(empty_lbl, 20, 20);
     } else {
         for (int i = 0; i < data.count; i++) {
-            make_history_row(history_container, i, data.spots[i], is_needed);
+            make_history_row(history_container, i, data.spots[i], is_needed, data.updated);
         }
     }
 
     if (data.count > 0 && data.count < MAX_HISTORY_SPOTS) {
-        char footer_buf[48];
+        // Real bug found and fixed 2026-09-08: this buffer was 48 bytes, but
+        // the actual message ("Showing 4 of last 10 -- older spots not
+        // available") is 49 characters + a null terminator = 50 bytes --
+        // snprintf correctly truncated it to fit, cutting the real text at
+        // exactly "...not availab", matching what showed up on real
+        // hardware precisely. This was never an LVGL rendering/width issue
+        // (the earlier fix to the label's own width/wrap/alignment was real
+        // and worth keeping, but addressed a different, non-existent
+        // problem -- the string was already truncated before it ever
+        // reached the label). Sized with real headroom this time, not just
+        // barely enough for today's exact wording.
+        char footer_buf[64];
         snprintf(footer_buf, sizeof(footer_buf), "Showing %d of last %d -- older spots not available",
                  data.count, MAX_HISTORY_SPOTS);
         lv_label_set_text(history_footer_lbl, footer_buf);

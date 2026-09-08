@@ -1206,18 +1206,31 @@ def _build_dxmon_watched():
             "beam": _get_heading_to_callsign(w["callsign"]),
         })
 
-    # Layered stable sort, least-significant key first -- see _sort_key_group's
-    # docstring for the four-group priority. Each pass only reorders items that are
-    # tied on every more-significant key applied afterward, since Python's sort is
-    # stable; this avoids needing one comparator that mixes ascending and descending
-    # directions across different fields.
+    # Layered stable sort, least-significant key first. Real design (2026-09-08):
+    # recency wins over everything else -- any entry with a real current spot comes
+    # first, most recent first; everything without one falls back to the original
+    # group/begin-date/callsign order. Before this, group order (Active/Upcoming/
+    # etc) dominated recency outright regardless of ties.
+    #
+    # A first attempt at this (adding just one outermost "has a spot" sort on top
+    # of the original four passes) had a real bug: the group and begin-date passes
+    # are MORE significant than the recency pass in a layered stable sort, so they
+    # were reordering has-a-spot entries by their own criteria -- discarding the
+    # recency order the earlier, less-significant pass had already established.
+    # Fixed by making those two passes return a TIED sentinel value for any entry
+    # that has a current spot, so they leave that entry's relative order untouched;
+    # they still fully apply their real logic to entries without a current spot.
     result.sort(key=lambda item: item["callsign"])
+    result.sort(
+        key=lambda item: (item["adxo"]["begin"] if item["adxo"] else "9999-99-99")
+        if item["last_spot"] is None else "0000-00-00"
+    )
+    result.sort(key=lambda item: _sort_key_group(item) if item["last_spot"] is None else -1)
     result.sort(
         key=lambda item: item["last_spot"]["received_at"] if item["last_spot"] else "",
         reverse=True,
     )
-    result.sort(key=lambda item: item["adxo"]["begin"] if item["adxo"] else "9999-99-99")
-    result.sort(key=_sort_key_group)
+    result.sort(key=lambda item: item["last_spot"] is None)
 
     return result
 
@@ -1592,20 +1605,26 @@ def _build_dxmon_needed():
             "last_seen": last_seen,
         })
 
-    # Stable multi-key sort, least significant first (matches this file's existing
-    # convention elsewhere, e.g. the old _build_dxmon_needed above did the same).
-    result.sort(key=lambda item: item["added"])  # tier 2 fallback: order-added, oldest first
-    result.sort(
-        key=lambda item: item["last_seen"]["received_at"] if item["last_seen"] else "",
-        reverse=True,
-    )  # tier 1: most-recently-seen first
+    # Real design change (2026-09-08), matching Watched's own analogous change:
+    # collapsed from the old three-tier sort (live > last-seen > neither, each
+    # with its own secondary ordering) to a simpler two-tier design -- anything
+    # with a current live spot comes first, most recent first; everything else
+    # (whether it has a last-seen record or not) falls back to alphabetical by
+    # entity. This only affects roster DISPLAY order -- Overview's own featured-
+    # entry selection (select_featured_target() in firmware) does its own
+    # independent scan for live/last-seen entries, not relying on array order,
+    # so it's unaffected by this change.
+    #
+    # Same tied-sentinel technique as the Watched fix above, for the same
+    # reason: the entity-alpha pass must leave has-a-live-spot entries alone
+    # entirely, or it would scramble the recency order the earlier pass
+    # already established for them.
+    result.sort(key=lambda item: item["entity"] if item["last_spot"] is None else "")
     result.sort(
         key=lambda item: item["last_spot"]["received_at"] if item["last_spot"] else "",
         reverse=True,
-    )  # tier 0 tie-break: most-recent live spot first
-    result.sort(
-        key=lambda item: 0 if item["last_spot"] else (1 if item["last_seen"] else 2)
-    )  # group: live > last-seen > neither
+    )
+    result.sort(key=lambda item: item["last_spot"] is None)
     return result
 
 
