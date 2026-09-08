@@ -565,6 +565,31 @@ def _needed_entry_kind(entry):
     return "entity"
 
 
+def _watched_adxo_ended(adxo_obj):
+    """Dan's own real signal (2026-09-08) for 'time to remove the HamAlert
+    trigger': a real ADXO link exists, it's no longer active, and its end
+    date has passed. Web-curation-page-only -- not shown on the device.
+
+    Real, accepted limitation for this first pass: once the underlying ADXO
+    listing itself ages out of the live feed entirely (not just past its own
+    end date, but old enough that DXMon's own ingestion filters it out of
+    the daily poll), this join goes back to None and the flag simply
+    disappears -- indistinguishable from "never had a link." Dan's own
+    explicit call was to build this simple version first (no new
+    persistence) and revisit only if that turns out to be a real problem in
+    practice -- i.e. if a reminder is observed disappearing before it's
+    actually been acted on."""
+    if not adxo_obj:
+        return False
+    if adxo_obj.get("active"):
+        return False
+    end = (adxo_obj.get("end") or "").strip()
+    if not end:
+        return False
+    today = datetime.now(EASTERN).date().isoformat()
+    return end < today
+
+
 def _needed_days_old(entry):
     """Days since a Needed entry was curated, for the web page's stale-entry flag
     (2026-09-05) -- purely a web curation UI concern, not exposed via
@@ -1831,12 +1856,30 @@ def page_index():
 def page_watched():
     with _watched_lock:
         entries = sorted(_watched, key=lambda w: w["added"], reverse=True)
+    # Real gap closed 2026-09-08: this page previously never joined ADXO data
+    # at all (unlike /api/dxmon/watched, which does) -- needed here now for
+    # the "DXpedition ended" reminder, so pulled in the same join pattern
+    # _build_dxmon_watched() already uses.
+    with _lock:
+        adxo_by_id = {e["id"]: e for e in _state["entries"]}
     # Copy each entry (never mutate _watched itself) and attach beam heading for
     # display -- kept separate from the persisted watched.json record.
     enriched = []
     for w in entries:
         e = dict(w)
         e["beam"] = _get_heading_to_callsign(w["callsign"])
+        sid = w.get("source_adxo_id")
+        adxo_obj = None
+        if sid and sid in adxo_by_id:
+            src = adxo_by_id[sid]
+            adxo_obj = {
+                "active": src["active"],
+                "begin": src["begin"],
+                "end": src["end"],
+                "info": src["info"],
+            }
+        e["adxo"] = adxo_obj
+        e["ended"] = _watched_adxo_ended(adxo_obj)
         enriched.append(e)
     return render_template("watched.html", entries=enriched)
 

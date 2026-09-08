@@ -1,6 +1,18 @@
 {% extends "base.html" %}
 {% block title %}Watched{% endblock %}
 {% block content %}
+  <style>
+    /* Added 2026-09-08 -- Dan's own real signal for "time to remove this
+       HamAlert trigger": a real ADXO link, no longer active, end date
+       passed. Reuses the base .badge class (base.html) for size/shape,
+       matching the .badge.upcoming override pattern already established
+       there, and the existing --danger color variable rather than adding
+       a new one. */
+    .badge.ended {
+      background: var(--danger);
+      color: #2b0505;
+    }
+  </style>
   <p class="meta">{{ entries|length }} watched callsign(s).</p>
 
   {% if not entries %}
@@ -13,6 +25,9 @@
         <div>
           <span class="callsign">{{ w.callsign }}</span>
           &mdash; <span class="dxcc">{{ w.dxcc }}</span>
+          {% if w.ended %}
+            <span class="badge ended" title="ADXO shows this DXpedition's end date has passed and it's no longer active -- consider removing its HamAlert trigger">Ended</span>
+          {% endif %}
         </div>
         <form method="post" action="{{ url_for('page_watch_remove', watched_id=w.id) }}"
               onsubmit="return confirm('Remove {{ w.callsign }} from watched?');">
