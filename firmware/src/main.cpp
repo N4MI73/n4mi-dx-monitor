@@ -147,17 +147,7 @@ static lv_color_t stale_aware_color(bool is_stale, lv_color_t fresh_color)
     return is_stale ? COLOR_TEXT_MUTED : fresh_color;
 }
 
-/** Formats "CALLSIGN -- N deg / N km" (or just "CALLSIGN" if no beam data),
- * added 2026-09-05 for Needed's Tier 1/Tier 2 and roster row displays -- the
- * spotted callsign is real, useful information a Needed entry (unlike Watched)
- * doesn't otherwise show anywhere, since a Needed entry can be hit by any
- * callsign operating that entity/slot, not one fixed known callsign.
- * Deliberately uses the plain ASCII "deg" abbreviation rather than a degree
- * symbol -- the embedded Montserrat bitmap font's Unicode coverage has already
- * bitten this project once (curly quotes rendering as tofu boxes on the
- * WATCHED panel's comment display, 2026-09-01); no reason to risk the same
- * class of bug on an untested glyph when a plain-ASCII alternative works. */
-/** Formats just "N deg / N km" (empty string if no beam data) -- added
+/** Formats just "N deg / N mi" (empty string if no beam data) -- added
  * 2026-09-06 so the callsign and its beam heading can be shown as two
  * separately-styled labels (callsign made bold/bright/larger per Dan's
  * request) rather than one combined string. Deliberately uses the plain
@@ -167,15 +157,20 @@ static lv_color_t stale_aware_color(bool is_stale, lv_color_t fresh_color)
  * display, 2026-09-01); no reason to risk the same class of bug on an
  * untested glyph when a plain-ASCII alternative works.
  * Two overloads share this logic -- SpotInfo (Needed) and WatchedEntry
- * (Watched, added 2026-09-06) both carry has_beam/heading_deg/distance_km
+ * (Watched, added 2026-09-06) both carry has_beam/heading_deg/distance_mi
  * fields with the same names, but they're unrelated structs, so C++ won't
  * implicitly convert one to the other; a shared raw-values helper avoids
- * duplicating the actual formatting logic. */
-static void format_beam_suffix_raw(bool has_beam, float heading_deg, int distance_km,
+ * duplicating the actual formatting logic.
+ * Distance in statute miles (2026-09-08, Dan's own preference -- U.S.
+ * standard) -- the field itself and every JSON payload it's parsed from
+ * were both renamed distance_km -> distance_mi at the same time, so this
+ * is the server's own already-converted value, not a client-side
+ * conversion happening here. */
+static void format_beam_suffix_raw(bool has_beam, float heading_deg, int distance_mi,
                                     char *out, size_t out_size)
 {
     if (has_beam) {
-        snprintf(out, out_size, "%.0f deg / %d km", heading_deg, distance_km);
+        snprintf(out, out_size, "%.0f deg / %d mi", heading_deg, distance_mi);
     } else {
         out[0] = '\0';
     }
@@ -183,12 +178,12 @@ static void format_beam_suffix_raw(bool has_beam, float heading_deg, int distanc
 
 static void format_beam_suffix(const SpotInfo &spot, char *out, size_t out_size)
 {
-    format_beam_suffix_raw(spot.has_beam, spot.heading_deg, spot.distance_km, out, out_size);
+    format_beam_suffix_raw(spot.has_beam, spot.heading_deg, spot.distance_mi, out, out_size);
 }
 
 static void format_beam_suffix(const WatchedEntry &e, char *out, size_t out_size)
 {
-    format_beam_suffix_raw(e.has_beam, e.heading_deg, e.distance_km, out, out_size);
+    format_beam_suffix_raw(e.has_beam, e.heading_deg, e.distance_mi, out, out_size);
 }
 
 // ---------------------------------------------------------------------------
@@ -1052,7 +1047,7 @@ static lv_obj_t *make_config_row(lv_obj_t *parent, lv_obj_t **out_dot, const cha
 static lv_obj_t *make_screen_config(void)
 {
     lv_obj_t *scr = make_screen();
-    create_header(scr, "CONFIG", "v0.1-dev");
+    create_header(scr, "CONFIG", "v1.0");
 
     lv_obj_t *panel = make_panel(scr, 16, 72, 768, 240);
 
@@ -1073,7 +1068,7 @@ static lv_obj_t *make_screen_config(void)
     make_config_row(panel, nullptr, "Curate at", curate_buf, COLOR_BADGE_BLUE_TX, 190);
     make_divider(panel, 20, 210, 728);
 
-    make_config_row(panel, nullptr, "Firmware", "v0.1-dev", COLOR_TEXT_PRIMARY, 227);
+    make_config_row(panel, nullptr, "Firmware", "v1.0", COLOR_TEXT_PRIMARY, 227);
 
     // Force Refresh -- real, functional.
     lv_obj_t *refresh_btn = lv_btn_create(scr);
@@ -1390,7 +1385,7 @@ static void make_activity_row(lv_obj_t *container, int index, const ActivitySpot
 
     // Band/mode uppercased into their own small buffers first -- concatenating
     // then upper-casing the whole detail string would also upper-case "deg"/
-    // "km", which every other beam-heading display in this app deliberately
+    // "mi", which every other beam-heading display in this app deliberately
     // keeps lowercase.
     char band_buf[8];
     strncpy(band_buf, s.band, sizeof(band_buf) - 1);
@@ -1403,8 +1398,8 @@ static void make_activity_row(lv_obj_t *container, int index, const ActivitySpot
 
     char detail_buf[48];
     if (s.has_beam) {
-        snprintf(detail_buf, sizeof(detail_buf), "%s %s -- %.0f deg / %d km",
-                 band_buf, mode_buf, s.heading_deg, s.distance_km);
+        snprintf(detail_buf, sizeof(detail_buf), "%s %s -- %.0f deg / %d mi",
+                 band_buf, mode_buf, s.heading_deg, s.distance_mi);
     } else {
         snprintf(detail_buf, sizeof(detail_buf), "%s %s", band_buf, mode_buf);
     }
@@ -1617,7 +1612,7 @@ static void make_history_row(lv_obj_t *container, int index, const HistorySpot &
         lv_obj_set_pos(cs_main, 20, 41);
 
         char beam_buf[32];
-        format_beam_suffix_raw(s.has_beam, s.heading_deg, s.distance_km, beam_buf, sizeof(beam_buf));
+        format_beam_suffix_raw(s.has_beam, s.heading_deg, s.distance_mi, beam_buf, sizeof(beam_buf));
         if (beam_buf[0] != '\0') {
             lv_obj_t *beam_lbl = lv_label_create(card);
             lv_label_set_text(beam_lbl, beam_buf);
@@ -1769,7 +1764,7 @@ static void open_history_callsign(const char *callsign)
         lv_label_set_text(history_status_lbl, "LIVE");
         lv_obj_set_style_text_color(history_status_lbl, COLOR_STATUS_GREEN, 0);
         char beam_buf[32];
-        format_beam_suffix_raw(data.has_beam, data.heading_deg, data.distance_km, beam_buf, sizeof(beam_buf));
+        format_beam_suffix_raw(data.has_beam, data.heading_deg, data.distance_mi, beam_buf, sizeof(beam_buf));
         lv_label_set_text(history_beam_lbl, beam_buf);
         render_history_data(data, false);
     } else {

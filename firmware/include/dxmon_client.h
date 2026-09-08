@@ -33,7 +33,7 @@ struct WatchedEntry {
     // pattern as the Needed callsign gap found and fixed 2026-09-05.
     bool has_beam;
     float heading_deg;
-    int distance_km;
+    int distance_mi;
 };
 
 struct WatchedData {
@@ -101,7 +101,7 @@ struct SpotInfo {
     // to a fixed callsign doesn't change over time.
     bool has_beam;
     float heading_deg;
-    int distance_km;
+    int distance_mi;
 };
 
 struct NeededEntry {
@@ -142,7 +142,7 @@ struct ActivitySpot {
     char received_at[32];
     bool has_beam;
     float heading_deg;
-    int distance_km;
+    int distance_mi;
 };
 
 struct ActivityData {
@@ -171,7 +171,7 @@ bool dxmon_fetch_activity(bool is_needed, ActivityData &out);
  * - Callsign-level (dxmon_fetch_history_callsign): opened from an
  *   individual-spot tap (Category Activity Feed row), or a Watched
  *   roster-row tap (a Watched entry already is one fixed callsign). `callsign`
- *   and the top-level `has_beam`/`heading_deg`/`distance_km` are populated;
+ *   and the top-level `has_beam`/`heading_deg`/`distance_mi` are populated;
  *   `entity`/`band`/`mode` are empty. Every spot shares the same callsign, so
  *   beam heading is only computed once, at the top level.
  * - Entity-level (dxmon_fetch_history_needed): opened from a Needed
@@ -189,7 +189,7 @@ struct HistorySpot {
     char received_at[32];
     bool has_beam;
     float heading_deg;
-    int distance_km;
+    int distance_mi;
 };
 
 struct HistoryData {
@@ -206,7 +206,7 @@ struct HistoryData {
 
     bool has_beam;         // top-level beam -- callsign-level only
     float heading_deg;
-    int distance_km;
+    int distance_mi;
 };
 
 /**

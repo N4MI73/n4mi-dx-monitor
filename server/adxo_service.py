@@ -1028,9 +1028,16 @@ def _init_beam_heading():
 
 
 def _get_heading_to_callsign(callsign):
-    """Returns {'heading_deg': float, 'distance_km': int} or None if unavailable
+    """Returns {'heading_deg': float, 'distance_mi': int} or None if unavailable
     (lookup not initialized, unknown callsign, or any other failure). Never raises --
-    a missing heading should never break the rest of /api/dxmon/watched's response."""
+    a missing heading should never break the rest of /api/dxmon/watched's response.
+
+    Distance in statute miles (2026-09-08, Dan's own preference -- U.S. standard).
+    _distance_km() itself is untouched (a legitimate internal km computation); the
+    conversion happens here, once, at the single point every endpoint across the
+    whole app calls through -- Watched, Needed, both activity feeds, and both
+    history endpoints all get this for free rather than needing five separate
+    conversions."""
     _init_beam_heading()
     if _callinfo is None or not callsign:
         return None
@@ -1038,8 +1045,9 @@ def _get_heading_to_callsign(callsign):
         target = _callinfo.get_lat_long(callsign)
         my_lat, my_lon = _station_latlon
         heading = _bearing_deg(my_lat, my_lon, target["latitude"], target["longitude"])
-        distance = _distance_km(my_lat, my_lon, target["latitude"], target["longitude"])
-        return {"heading_deg": round(heading, 1), "distance_km": round(distance)}
+        distance_km = _distance_km(my_lat, my_lon, target["latitude"], target["longitude"])
+        distance_mi = distance_km * 0.621371  # exact km-to-statute-mile factor
+        return {"heading_deg": round(heading, 1), "distance_mi": round(distance_mi)}
     except Exception as exc:  # noqa: BLE001 -- unknown callsign, bad data, etc.
         log.debug("No heading available for %r: %s", callsign, exc)
         return None

@@ -104,11 +104,11 @@ static void parse_spot_info(SpotInfo &spot, JsonVariant v)
     if (beam.isNull()) {
         spot.has_beam = false;
         spot.heading_deg = 0.0f;
-        spot.distance_km = 0;
+        spot.distance_mi = 0;
     } else {
         spot.has_beam = true;
         spot.heading_deg = beam["heading_deg"] | 0.0f;
-        spot.distance_km = beam["distance_km"] | 0;
+        spot.distance_mi = beam["distance_mi"] | 0;
     }
 }
 
@@ -258,11 +258,11 @@ bool dxmon_fetch_activity(bool is_needed, ActivityData &out)
         if (beam.isNull()) {
             s.has_beam = false;
             s.heading_deg = 0.0f;
-            s.distance_km = 0;
+            s.distance_mi = 0;
         } else {
             s.has_beam = true;
             s.heading_deg = beam["heading_deg"] | 0.0f;
-            s.distance_km = beam["distance_km"] | 0;
+            s.distance_mi = beam["distance_mi"] | 0;
         }
 
         temp->count++;
@@ -284,11 +284,11 @@ static void parse_history_spot(HistorySpot &s, JsonVariant item)
     if (beam.isNull()) {
         s.has_beam = false;
         s.heading_deg = 0.0f;
-        s.distance_km = 0;
+        s.distance_mi = 0;
     } else {
         s.has_beam = true;
         s.heading_deg = beam["heading_deg"] | 0.0f;
-        s.distance_km = beam["distance_km"] | 0;
+        s.distance_mi = beam["distance_mi"] | 0;
     }
 }
 
@@ -345,11 +345,11 @@ bool dxmon_fetch_history_callsign(const char *callsign, HistoryData &out)
     if (beam.isNull()) {
         temp.has_beam = false;
         temp.heading_deg = 0.0f;
-        temp.distance_km = 0;
+        temp.distance_mi = 0;
     } else {
         temp.has_beam = true;
         temp.heading_deg = beam["heading_deg"] | 0.0f;
-        temp.distance_km = beam["distance_km"] | 0;
+        temp.distance_mi = beam["distance_mi"] | 0;
     }
 
     for (JsonVariant item : arr) {
@@ -416,7 +416,7 @@ bool dxmon_fetch_history_needed(const char *needed_id, HistoryData &out)
     copy_field(temp.mode, sizeof(temp.mode), doc["mode"]);
     temp.has_beam = false;
     temp.heading_deg = 0.0f;
-    temp.distance_km = 0;
+    temp.distance_mi = 0;
 
     for (JsonVariant item : arr) {
         if (temp.count >= MAX_HISTORY_SPOTS) break;
@@ -502,11 +502,11 @@ bool dxmon_fetch_watched(WatchedData &out)
         if (beam.isNull()) {
             we.has_beam = false;
             we.heading_deg = 0.0f;
-            we.distance_km = 0;
+            we.distance_mi = 0;
         } else {
             we.has_beam = true;
             we.heading_deg = beam["heading_deg"] | 0.0f;
-            we.distance_km = beam["distance_km"] | 0;
+            we.distance_mi = beam["distance_mi"] | 0;
         }
 
         temp.count++;

@@ -86,7 +86,7 @@
           <div style="padding: 0.4rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
             <span class="callsign" style="font-size: 0.9rem;">{{ b.callsign }}</span><br>
             {% if b.beam %}
-              <span class="meta">{{ b.beam.heading_deg }}&deg; &middot; {{ b.beam.distance_km }} km</span>
+              <span class="meta">{{ b.beam.heading_deg }}&deg; &middot; {{ b.beam.distance_mi }} mi</span>
             {% else %}
               <span class="meta">no heading available</span>
             {% endif %}
