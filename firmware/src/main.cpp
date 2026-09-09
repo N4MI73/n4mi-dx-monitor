@@ -1852,6 +1852,15 @@ static void make_watched_row(lv_obj_t *container, int index, const WatchedEntry 
     bool waiting = !active && e.adxo_active == true;
     bool no_adxo = !active && !upcoming && !waiting;
 
+    // Added 2026-09-10: Dan's own earlier observation (a 44-hour-old Needed
+    // last-seen entry still rendering in full bright color) applied here too
+    // -- a Watched row's spot can be real but old, and should dim the same
+    // way Single-Target History and Needed's Overview panel already do.
+    // Reuses the existing 4-hour threshold and helpers unchanged; "active"
+    // only means "has a real spot at all," not "is it still fresh," so this
+    // is a genuinely separate check layered on top of it.
+    bool stale = active && spot_is_stale(e.received_at, now_iso);
+
     lv_obj_t *card = make_row_card(container, y, !active);
 
     // Added 2026-09-08: tapping a Watched roster row opens that entry's own
@@ -1874,8 +1883,8 @@ static void make_watched_row(lv_obj_t *container, int index, const WatchedEntry 
     lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
     lv_obj_set_pos(dot, 20, 33);
 
-    lv_color_t text_primary = active ? COLOR_TEXT_PRIMARY : COLOR_TEXT_SECOND;
-    lv_color_t text_secondary = active ? COLOR_TEXT_SECOND : COLOR_TEXT_MUTED;
+    lv_color_t text_primary = stale ? COLOR_TEXT_MUTED : (active ? COLOR_TEXT_PRIMARY : COLOR_TEXT_SECOND);
+    lv_color_t text_secondary = stale ? COLOR_TEXT_MUTED : (active ? COLOR_TEXT_SECOND : COLOR_TEXT_MUTED);
 
     lv_obj_t *cs_lbl = make_label(card, e.callsign, &lv_font_montserrat_26, text_primary, 36, 12);
     // Added 2026-09-06: beam heading inline to the callsign's right, same
@@ -1909,12 +1918,12 @@ static void make_watched_row(lv_obj_t *container, int index, const WatchedEntry 
         lv_obj_t *mode_lbl = lv_label_create(mode_badge);
         lv_label_set_text(mode_lbl, mode_buf);
         lv_obj_set_style_text_font(mode_lbl, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(mode_lbl, COLOR_BADGE_BLUE_TX, 0);
+        lv_obj_set_style_text_color(mode_lbl, stale_aware_color(stale, COLOR_BADGE_BLUE_TX), 0);
         lv_obj_center(mode_lbl);
 
         char freq_buf[24];
         snprintf(freq_buf, sizeof(freq_buf), "%s MHz", e.frequency);
-        make_label(card, freq_buf, &lv_font_montserrat_16, COLOR_TEXT_PRIMARY, 640, 20);
+        make_label(card, freq_buf, &lv_font_montserrat_16, stale_aware_color(stale, COLOR_TEXT_PRIMARY), 640, 20);
 
         // Plain reformatted timestamp, not computed elapsed-time ("2m ago") -- deliberately
         // consistent with Overview's own already-proven treatment, not a new deviation.
