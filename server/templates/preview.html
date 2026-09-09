@@ -94,6 +94,17 @@
   }
   .device-badge.active { background: var(--accent-active); color: #05121f; }
   .device-badge.upcoming { background: var(--accent-upcoming); color: #241a00; }
+  .device-badge.slot {
+    background: none;
+    border: 1px solid var(--accent-active);
+    color: var(--accent-active);
+  }
+  .device-badge.entity {
+    background: none;
+    border: 1px solid var(--accent-upcoming);
+    color: var(--accent-upcoming);
+  }
+  .device-stale { opacity: 0.55; }
   .overview-split { display: flex; gap: 0.8rem; height: 100%; }
   .overview-panel {
     flex: 1;
@@ -120,6 +131,7 @@
 
 <script>
 let watchedData = null;
+let neededData = null;
 let previewStatus = null;
 let activeTab = 'overview';
 
@@ -138,43 +150,237 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
-function renderWatchedRow(w) {
-  let badge = '';
-  if (w.adxo) {
-    badge = w.adxo.active
-      ? '<span class="device-badge active">Active</span>'
-      : '<span class="device-badge upcoming">Upcoming</span>';
+function formatShortDate(isoString) {
+  if (!isoString) return '--';
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return '--';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function formatBeamSuffix(beam) {
+  if (!beam) return '';
+  return Math.round(beam.heading_deg) + ' deg / ' + beam.distance_mi + ' mi';
+}
+
+// Matches the real firmware's STALE_SPOT_THRESHOLD_SEC (4 hours) and its own
+// approach of comparing against the response's own "updated" timestamp
+// rather than the browser's local clock, so this stays correct even if the
+// viewing machine's clock is off.
+function isStale(receivedAt, nowIso) {
+  if (!receivedAt || !nowIso) return false;
+  const spotTime = new Date(receivedAt).getTime();
+  const nowTime = new Date(nowIso).getTime();
+  if (isNaN(spotTime) || isNaN(nowTime)) return false;
+  return (nowTime - spotTime) > (4 * 60 * 60 * 1000);
+}
+
+// Matches select_featured_target()'s real behavior in firmware -- scans
+// every entry for whichever has the most recent matching spot, rather than
+// just taking the sorted array's own first entry. This matters because the
+// Needed roster's own sort order (2026-09-08 redesign) only prioritizes
+// recency for entries with a CURRENT live spot; entries with only a
+// last-seen record are sorted alphabetically, not by recency, so the array's
+// own order alone can't be used to find the most-recently-seen one.
+function selectFeaturedNeeded(needed, wantLive) {
+  let best = null;
+  for (const n of needed) {
+    const spot = wantLive ? n.last_spot : n.last_seen;
+    if (!spot) continue;
+    const bestSpot = best ? (wantLive ? best.last_spot : best.last_seen) : null;
+    if (!bestSpot || spot.received_at > bestSpot.received_at) {
+      best = n;
+    }
   }
-  let spotLine = 'No spots yet';
-  if (w.last_spot) {
-    spotLine = escapeHtml(w.last_spot.frequency) + ' MHz &middot; ' +
-               escapeHtml(w.last_spot.mode) + ' &middot; ' + ageString(w.last_spot.received_at);
+  return best;
+}
+
+function renderNeededKindBadge(kind) {
+  return kind === 'slot'
+    ? '<span class="device-badge slot">Slot</span>'
+    : '<span class="device-badge entity">Entity</span>';
+}
+
+// Ticker rotation for the Needed panel's Tier 3 (cold-start) state -- matches
+// the real firmware's TICKER_INTERVAL_MS (3000ms) exactly. Managed
+// separately from the normal render cycle since it needs to keep running
+// between full re-renders, updating just its own DOM node rather than
+// re-rendering the whole panel every 3 seconds.
+let tickerNames = [];
+let tickerIndex = 0;
+let tickerIntervalHandle = null;
+
+function stopNeededTicker() {
+  if (tickerIntervalHandle) {
+    clearInterval(tickerIntervalHandle);
+    tickerIntervalHandle = null;
   }
-  let beamLine = '';
-  if (w.beam) {
-    beamLine = ' &middot; ' + w.beam.heading_deg + '&deg; / ' + w.beam.distance_mi + ' mi';
+}
+
+function startNeededTicker(names) {
+  stopNeededTicker();
+  tickerNames = names;
+  tickerIndex = 0;
+  const el = document.getElementById('needed-ticker');
+  if (el && tickerNames.length) el.textContent = tickerNames[0];
+  if (tickerNames.length > 1) {
+    tickerIntervalHandle = setInterval(function() {
+      tickerIndex = (tickerIndex + 1) % tickerNames.length;
+      const el2 = document.getElementById('needed-ticker');
+      if (el2) el2.textContent = tickerNames[tickerIndex];
+    }, 3000);
   }
-  return '<div class="device-row">' +
-    badge +
-    '<span class="device-callsign">' + escapeHtml(w.callsign) + '</span> ' +
-    '<span class="device-dxcc">' + escapeHtml(w.dxcc) + '</span>' +
-    '<div class="device-stat">' + spotLine + beamLine + '</div>' +
+}
+
+// Matches update_overview_watched()'s real layout exactly: status badge,
+// callsign+beam inline, DXCC on its own line below, a labeled FREQUENCY/
+// MODE/LAST SPOT row, a COMMENT line, an ACTIVE THROUGH line, and a "+N
+// more" badge. Real, separate layout from the roster row below -- these
+// were being incorrectly treated as the same thing before this fix.
+function renderOverviewWatchedPanel() {
+  const watched = (watchedData && watchedData.watched) || [];
+  if (!watched.length) {
+    return '<div class="device-stat">Watchlist is empty</div>';
+  }
+  // Already sorted server-side (recency-first, then ADXO group order) --
+  // the array's own first entry is the correct featured one, matching the
+  // real sort's own purpose.
+  const e = watched[0];
+  const hasSpot = !!e.last_spot;
+
+  let statusHtml;
+  if (hasSpot) {
+    statusHtml = '<span style="color: var(--accent-active);">&#9679; ACTIVE</span>';
+  } else if (e.adxo && e.adxo.active) {
+    statusHtml = '<span style="color: var(--muted);">&#9679; WAITING</span>';
+  } else {
+    statusHtml = '<span style="color: var(--muted);">-</span>';
+  }
+
+  let freqRow, commentHtml;
+  if (hasSpot) {
+    freqRow = escapeHtml(e.last_spot.frequency) + ' MHz &middot; ' +
+              escapeHtml((e.last_spot.mode || '').toUpperCase()) + ' &middot; ' +
+              formatShortDate(e.last_spot.received_at);
+    commentHtml = e.last_spot.comment
+      ? '<div class="device-stat">"' + escapeHtml(e.last_spot.comment) + '"</div>'
+      : '';
+  } else {
+    freqRow = '-- &middot; -- &middot; Not yet spotted';
+    commentHtml = '';
+  }
+
+  const activeThrough = (e.adxo && e.adxo.end) ? formatShortDate(e.adxo.end) : '--';
+  const more = watched.length - 1;
+  const moreHtml = more > 0
+    ? '<div class="device-stat" style="margin-top: 0.4rem;">+' + more + ' more watched</div>'
+    : '';
+
+  return '<div style="text-align: right; font-size: 0.75rem; margin-bottom: 0.3rem;">' + statusHtml + '</div>' +
+    '<div>' +
+      '<span class="device-callsign">' + escapeHtml(e.callsign) + '</span> ' +
+      formatBeamSuffix(e.beam) +
+    '</div>' +
+    '<div class="device-dxcc">' + escapeHtml(e.dxcc) + '</div>' +
+    '<div class="device-stat" style="margin-top: 0.5rem;">' + freqRow + '</div>' +
+    commentHtml +
+    '<div class="device-stat" style="margin-top: 0.4rem;">Active through ' + activeThrough + '</div>' +
+    moreHtml;
+}
+
+// Matches make_watched_row()'s real roster-tab layout: dot, callsign+beam
+// inline, DXCC below, mode badge + frequency in the top-right, timestamp
+// below that. Genuinely different from the Overview panel above -- these
+// are two separate real screens on the device, not one shared layout.
+function renderWatchedRosterRow(e) {
+  const active = !!e.last_spot;
+  const dotColor = active ? 'var(--accent-active)' : 'var(--muted)';
+  const textClass = active ? '' : ' device-stale';
+
+  let rightSide = '';
+  if (active) {
+    rightSide = '<div style="text-align: right;">' +
+      '<span class="device-badge slot" style="margin-right: 0;">' + escapeHtml((e.last_spot.mode || '').toUpperCase()) + '</span>' +
+      '<div class="device-stat" style="margin-top: 0.3rem;">' + escapeHtml(e.last_spot.frequency) + ' MHz</div>' +
+      '<div class="device-stat">' + formatShortDate(e.last_spot.received_at) + '</div>' +
+    '</div>';
+  }
+
+  return '<div class="device-row' + textClass + '" style="display: flex; justify-content: space-between; align-items: flex-start;">' +
+    '<div>' +
+      '<span style="color: ' + dotColor + ';">&#9679;</span> ' +
+      '<span class="device-callsign" style="font-size: 1.1rem;">' + escapeHtml(e.callsign) + '</span> ' +
+      formatBeamSuffix(e.beam) +
+      '<div class="device-dxcc">' + escapeHtml(e.dxcc) + '</div>' +
+    '</div>' +
+    rightSide +
   '</div>';
 }
 
+function renderNeededPanel() {
+  const needed = (neededData && neededData.needed) || [];
+  const nowIso = (neededData && neededData.updated) || new Date().toISOString();
+
+  // Genuinely empty curated list -- real, dedicated nudge state (2026-09-09),
+  // distinct from the cold-start state below (entries exist, none ever
+  // spotted).
+  if (needed.length === 0) {
+    return '<div class="device-stat">Needed list is empty<br>Curate entries at <a href="/needed" style="color: var(--accent-active);">/needed</a></div>';
+  }
+
+  const liveEntry = selectFeaturedNeeded(needed, true);
+  if (liveEntry) {
+    const spot = liveEntry.last_spot;
+    const staleClass = isStale(spot.received_at, nowIso) ? ' device-stale' : '';
+    let subtitle = '';
+    if (liveEntry.kind === 'slot') {
+      const bandMode = (liveEntry.band + ' ' + liveEntry.mode).trim();
+      subtitle = '<div class="device-stat">' + escapeHtml(bandMode) + '</div>';
+    }
+    return '<div class="' + staleClass.trim() + '">' +
+      renderNeededKindBadge(liveEntry.kind) +
+      '<span class="device-dxcc">' + escapeHtml(liveEntry.entity) + '</span>' +
+      subtitle +
+      '<div class="device-stat">' + escapeHtml(spot.frequency) + ' MHz &middot; ' +
+        escapeHtml(spot.mode) + ' &middot; ' + ageString(spot.received_at) + '</div>' +
+      '<div class="device-stat" style="margin-top: 0.3rem;">' +
+        '<span class="device-callsign" style="font-size: 1rem;">' + escapeHtml(spot.callsign) + '</span> ' +
+        formatBeamSuffix(spot.beam) +
+      '</div>' +
+    '</div>';
+  }
+
+  const seenEntry = selectFeaturedNeeded(needed, false);
+  if (seenEntry) {
+    const spot = seenEntry.last_seen;
+    const staleClass = isStale(spot.received_at, nowIso) ? ' device-stale' : '';
+    return '<div class="' + staleClass.trim() + '">' +
+      '<div class="device-stat">Last hit: ' + ageString(spot.received_at) + '</div>' +
+      '<span class="device-dxcc">' + escapeHtml(seenEntry.entity) + '</span>' +
+      '<div class="device-stat" style="margin-top: 0.3rem;">' +
+        '<span class="device-callsign" style="font-size: 1rem;">' + escapeHtml(spot.callsign) + '</span> ' +
+        formatBeamSuffix(spot.beam) +
+      '</div>' +
+    '</div>';
+  }
+
+  // Tier 3 -- cold start: entries exist, none ever spotted/seen. Real
+  // ticker rotation is started separately (see renderActiveTab) once this
+  // HTML is actually in the DOM.
+  const entityCount = needed.filter(function(n) { return n.kind === 'entity'; }).length;
+  const slotCount = needed.filter(function(n) { return n.kind === 'slot'; }).length;
+  return '<div class="device-stat">' + entityCount + ' entity - ' + slotCount + ' slot tracked</div>' +
+    '<div id="needed-ticker" class="device-stat"></div>';
+}
+
 function renderOverview() {
-  const watched = (watchedData && watchedData.watched) || [];
-  const watchedHtml = watched.length
-    ? watched.slice(0, 4).map(renderWatchedRow).join('')
-    : '<div class="device-stat">Nothing watched yet.</div>';
   return '<div class="overview-split">' +
     '<div class="overview-panel" style="border-left: 3px solid var(--accent-active);">' +
       '<div class="overview-panel-title" style="color: var(--accent-active);">Watched</div>' +
-      watchedHtml +
+      renderOverviewWatchedPanel() +
     '</div>' +
     '<div class="overview-panel" style="border-left: 3px solid var(--accent-upcoming);">' +
       '<div class="overview-panel-title" style="color: var(--accent-upcoming);">Needed</div>' +
-      '<div class="device-stat">Not yet built.</div>' +
+      renderNeededPanel() +
     '</div>' +
   '</div>';
 }
@@ -182,11 +388,50 @@ function renderOverview() {
 function renderWatched() {
   const watched = (watchedData && watchedData.watched) || [];
   if (!watched.length) return '<div class="preview-empty">Nothing watched yet.</div>';
-  return watched.map(renderWatchedRow).join('');
+  return watched.map(renderWatchedRosterRow).join('');
+}
+
+function renderNeededRow(n) {
+  const live = !!n.last_spot;
+  const seen = !live && !!n.last_seen;
+  const spot = n.last_spot || n.last_seen;
+
+  let subtitle = '';
+  if (n.kind === 'slot') {
+    const bandMode = (n.band + ' ' + n.mode).trim();
+    subtitle = '<div class="device-stat">' + escapeHtml(bandMode) + '</div>';
+  }
+
+  let rightSide = '';
+  let spotLine = '<span style="color: var(--muted);">Never spotted</span>';
+  if (spot) {
+    spotLine = '<span class="device-callsign" style="font-size: 0.95rem;">' + escapeHtml(spot.callsign) + '</span> ' +
+               formatBeamSuffix(spot.beam);
+    const whenPrefix = live ? '' : 'Last hit: ';
+    rightSide = '<div style="text-align: right;">' +
+      '<span class="device-badge slot" style="margin-right: 0;">' + escapeHtml((spot.mode || '').toUpperCase()) + '</span>' +
+      '<div class="device-stat" style="margin-top: 0.3rem;">' + escapeHtml(spot.frequency) + ' MHz</div>' +
+      '<div class="device-stat">' + whenPrefix + formatShortDate(spot.received_at) + '</div>' +
+    '</div>';
+  }
+
+  return '<div class="device-row" style="display: flex; justify-content: space-between; align-items: flex-start;">' +
+    '<div>' +
+      renderNeededKindBadge(n.kind) +
+      '<span class="device-dxcc">' + escapeHtml(n.entity) + '</span>' +
+      subtitle +
+      '<div class="device-stat" style="margin-top: 0.2rem;">' + spotLine + '</div>' +
+    '</div>' +
+    rightSide +
+  '</div>';
 }
 
 function renderNeeded() {
-  return '<div class="preview-empty">Needed-entity tracking is designed but not yet built.<br>See the project roadmap in DXMon\'s Joplin note.</div>';
+  const needed = (neededData && neededData.needed) || [];
+  if (!needed.length) {
+    return '<div class="preview-empty">Needed list is empty.<br>Curate entries from the <a href="/needed" style="color: var(--accent-active);">Needed</a> page.</div>';
+  }
+  return needed.map(renderNeededRow).join('');
 }
 
 function renderConfig() {
@@ -206,10 +451,21 @@ function renderConfig() {
 
 function renderActiveTab() {
   const content = document.getElementById('device-content');
+  stopNeededTicker();
   if (activeTab === 'overview') content.innerHTML = renderOverview();
   else if (activeTab === 'watched') content.innerHTML = renderWatched();
   else if (activeTab === 'needed') content.innerHTML = renderNeeded();
   else if (activeTab === 'config') content.innerHTML = renderConfig();
+
+  // The ticker element only exists in the DOM when the Needed panel is
+  // actually showing its Tier 3 cold-start state -- start rotation only
+  // then, matching the real firmware's own behavior of only ticking while
+  // that specific state is on screen.
+  const tickerEl = document.getElementById('needed-ticker');
+  if (tickerEl) {
+    const needed = (neededData && neededData.needed) || [];
+    startNeededTicker(needed.map(function(n) { return n.entity; }));
+  }
 }
 
 function switchTab(tab) {
@@ -223,11 +479,13 @@ function switchTab(tab) {
 async function loadData() {
   document.getElementById('last-updated').textContent = 'Loading...';
   try {
-    const [watchedRes, statusRes] = await Promise.all([
+    const [watchedRes, neededRes, statusRes] = await Promise.all([
       fetch('/api/dxmon/watched'),
+      fetch('/api/dxmon/needed'),
       fetch('/api/preview/status'),
     ]);
     watchedData = await watchedRes.json();
+    neededData = await neededRes.json();
     previewStatus = await statusRes.json();
     document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
   } catch (e) {
