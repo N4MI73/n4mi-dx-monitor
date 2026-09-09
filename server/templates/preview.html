@@ -150,11 +150,33 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// Matches format_short_date()'s real approach exactly: extract raw digits
+// directly from the ISO string's fixed character positions, with NO Date
+// object and NO timezone conversion at all. This matters for real
+// correctness, not just style -- new Date(iso) + toLocaleDateString()
+// converts to the viewing BROWSER's local timezone, which could easily
+// differ from the server's Eastern time and would silently shift every
+// timestamp shown, unlike the real device (which never does any timezone
+// math either).
 function formatShortDate(isoString) {
-  if (!isoString) return '--';
-  const d = new Date(isoString);
-  if (isNaN(d.getTime())) return '--';
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  if (!isoString || isoString.length < 10) return '--';
+  const month = parseInt(isoString.substring(5, 7), 10);
+  const day = parseInt(isoString.substring(8, 10), 10);
+  if (!month || month < 1 || month > 12) return '--';
+  return MONTH_ABBR[month - 1] + ' ' + day;
+}
+
+// Matches format_short_datetime()'s real approach -- same raw-character
+// extraction, extended with hour/minute straight from the string too.
+function formatShortDateTime(isoString) {
+  if (!isoString || isoString.length < 16) return '--';
+  const datePart = formatShortDate(isoString);
+  if (datePart === '--') return '--';
+  const hour = isoString.substring(11, 13);
+  const minute = isoString.substring(14, 16);
+  return datePart + ', ' + hour + ':' + minute;
 }
 
 function formatBeamSuffix(beam) {
@@ -198,6 +220,30 @@ function renderNeededKindBadge(kind) {
   return kind === 'slot'
     ? '<span class="device-badge slot">Slot</span>'
     : '<span class="device-badge entity">Entity</span>';
+}
+
+// Real device shows FREQUENCY / MODE / LAST SPOT as three labeled columns,
+// not a single flattened "freq · mode · time" line -- confirmed against
+// real device photos. Shared by both Overview panels since both use this
+// exact structure.
+function renderLabeledStatRow(freqText, modeText, dateText) {
+  const modeHtml = modeText
+    ? '<span class="device-badge slot" style="margin-right: 0;">' + escapeHtml(modeText.toUpperCase()) + '</span>'
+    : '<span class="device-stat">--</span>';
+  return '<div style="display: flex; gap: 1rem; margin-top: 0.5rem;">' +
+    '<div style="flex: 1.2;">' +
+      '<div style="font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 0.2rem;">Frequency</div>' +
+      '<div class="device-stat" style="color: var(--text);">' + escapeHtml(freqText) + '</div>' +
+    '</div>' +
+    '<div style="flex: 0.8;">' +
+      '<div style="font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 0.2rem;">Mode</div>' +
+      modeHtml +
+    '</div>' +
+    '<div style="flex: 1;">' +
+      '<div style="font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 0.2rem;">Last Spot</div>' +
+      '<div class="device-stat" style="color: var(--text);">' + escapeHtml(dateText) + '</div>' +
+    '</div>' +
+  '</div>';
 }
 
 // Ticker rotation for the Needed panel's Tier 3 (cold-start) state -- matches
@@ -256,17 +302,13 @@ function renderOverviewWatchedPanel() {
     statusHtml = '<span style="color: var(--muted);">-</span>';
   }
 
-  let freqRow, commentHtml;
+  let statRow, commentText;
   if (hasSpot) {
-    freqRow = escapeHtml(e.last_spot.frequency) + ' MHz &middot; ' +
-              escapeHtml((e.last_spot.mode || '').toUpperCase()) + ' &middot; ' +
-              formatShortDate(e.last_spot.received_at);
-    commentHtml = e.last_spot.comment
-      ? '<div class="device-stat">"' + escapeHtml(e.last_spot.comment) + '"</div>'
-      : '';
+    statRow = renderLabeledStatRow(e.last_spot.frequency + ' MHz', e.last_spot.mode, formatShortDateTime(e.last_spot.received_at));
+    commentText = e.last_spot.comment ? '"' + e.last_spot.comment + '"' : '';
   } else {
-    freqRow = '-- &middot; -- &middot; Not yet spotted';
-    commentHtml = '';
+    statRow = renderLabeledStatRow('--', '', 'Not yet spotted');
+    commentText = '';
   }
 
   const activeThrough = (e.adxo && e.adxo.end) ? formatShortDate(e.adxo.end) : '--';
@@ -275,15 +317,19 @@ function renderOverviewWatchedPanel() {
     ? '<div class="device-stat" style="margin-top: 0.4rem;">+' + more + ' more watched</div>'
     : '';
 
+  // Real device always shows the COMMENT label, even with nothing under it --
+  // this was previously hidden entirely whenever the comment was empty.
   return '<div style="text-align: right; font-size: 0.75rem; margin-bottom: 0.3rem;">' + statusHtml + '</div>' +
     '<div>' +
       '<span class="device-callsign">' + escapeHtml(e.callsign) + '</span> ' +
       formatBeamSuffix(e.beam) +
     '</div>' +
     '<div class="device-dxcc">' + escapeHtml(e.dxcc) + '</div>' +
-    '<div class="device-stat" style="margin-top: 0.5rem;">' + freqRow + '</div>' +
-    commentHtml +
-    '<div class="device-stat" style="margin-top: 0.4rem;">Active through ' + activeThrough + '</div>' +
+    statRow +
+    '<div style="font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-top: 0.5rem;">Comment</div>' +
+    '<div class="device-stat">' + escapeHtml(commentText) + '</div>' +
+    '<div style="font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-top: 0.5rem;">Active Through</div>' +
+    '<div class="device-stat">' + activeThrough + '</div>' +
     moreHtml;
 }
 
@@ -301,7 +347,7 @@ function renderWatchedRosterRow(e) {
     rightSide = '<div style="text-align: right;">' +
       '<span class="device-badge slot" style="margin-right: 0;">' + escapeHtml((e.last_spot.mode || '').toUpperCase()) + '</span>' +
       '<div class="device-stat" style="margin-top: 0.3rem;">' + escapeHtml(e.last_spot.frequency) + ' MHz</div>' +
-      '<div class="device-stat">' + formatShortDate(e.last_spot.received_at) + '</div>' +
+      '<div class="device-stat">' + formatShortDateTime(e.last_spot.received_at) + '</div>' +
     '</div>';
   }
 
@@ -340,8 +386,7 @@ function renderNeededPanel() {
       renderNeededKindBadge(liveEntry.kind) +
       '<span class="device-dxcc">' + escapeHtml(liveEntry.entity) + '</span>' +
       subtitle +
-      '<div class="device-stat">' + escapeHtml(spot.frequency) + ' MHz &middot; ' +
-        escapeHtml(spot.mode) + ' &middot; ' + ageString(spot.received_at) + '</div>' +
+      renderLabeledStatRow(spot.frequency + ' MHz', spot.mode, formatShortDateTime(spot.received_at)) +
       '<div class="device-stat" style="margin-top: 0.3rem;">' +
         '<span class="device-callsign" style="font-size: 1rem;">' + escapeHtml(spot.callsign) + '</span> ' +
         formatBeamSuffix(spot.beam) +
@@ -354,7 +399,7 @@ function renderNeededPanel() {
     const spot = seenEntry.last_seen;
     const staleClass = isStale(spot.received_at, nowIso) ? ' device-stale' : '';
     return '<div class="' + staleClass.trim() + '">' +
-      '<div class="device-stat">Last hit: ' + ageString(spot.received_at) + '</div>' +
+      '<div class="device-stat">Last hit: ' + formatShortDateTime(spot.received_at) + '</div>' +
       '<span class="device-dxcc">' + escapeHtml(seenEntry.entity) + '</span>' +
       '<div class="device-stat" style="margin-top: 0.3rem;">' +
         '<span class="device-callsign" style="font-size: 1rem;">' + escapeHtml(spot.callsign) + '</span> ' +
@@ -373,13 +418,17 @@ function renderNeededPanel() {
 }
 
 function renderOverview() {
+  const neededCount = (neededData && neededData.needed) ? neededData.needed.length : 0;
   return '<div class="overview-split">' +
     '<div class="overview-panel" style="border-left: 3px solid var(--accent-active);">' +
       '<div class="overview-panel-title" style="color: var(--accent-active);">Watched</div>' +
       renderOverviewWatchedPanel() +
     '</div>' +
     '<div class="overview-panel" style="border-left: 3px solid var(--accent-upcoming);">' +
-      '<div class="overview-panel-title" style="color: var(--accent-upcoming);">Needed</div>' +
+      '<div style="display: flex; justify-content: space-between; align-items: baseline;">' +
+        '<div class="overview-panel-title" style="color: var(--accent-upcoming); margin-bottom: 0;">Needed</div>' +
+        '<span style="font-size: 0.7rem; color: var(--muted);">' + neededCount + ' TRACKED</span>' +
+      '</div>' +
       renderNeededPanel() +
     '</div>' +
   '</div>';
@@ -411,7 +460,7 @@ function renderNeededRow(n) {
     rightSide = '<div style="text-align: right;">' +
       '<span class="device-badge slot" style="margin-right: 0;">' + escapeHtml((spot.mode || '').toUpperCase()) + '</span>' +
       '<div class="device-stat" style="margin-top: 0.3rem;">' + escapeHtml(spot.frequency) + ' MHz</div>' +
-      '<div class="device-stat">' + whenPrefix + formatShortDate(spot.received_at) + '</div>' +
+      '<div class="device-stat">' + whenPrefix + formatShortDateTime(spot.received_at) + '</div>' +
     '</div>';
   }
 
@@ -434,19 +483,38 @@ function renderNeeded() {
   return needed.map(renderNeededRow).join('');
 }
 
+function configDot(color) {
+  return '<span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ' + color + '; margin-right: 0.5rem;"></span>';
+}
+
 function renderConfig() {
   if (!previewStatus) return '<div class="preview-loading">Loading...</div>';
   const hamalert = previewStatus.hamalert || {};
+  const hamalertConnected = !hamalert.unreachable && hamalert.connected;
   const hamalertLine = hamalert.unreachable
-    ? 'Listener unreachable'
+    ? 'Unreachable'
     : (hamalert.enabled ? (hamalert.connected ? 'Connected' : 'Enabled, not connected') : 'Disabled');
+  const adxo = previewStatus.adxo || {};
+  const pollLine = adxo.updated
+    ? (adxo.poll_ok ? 'OK' : 'Error') + ' &middot; ' + formatShortDateTime(adxo.updated)
+    : 'Never polled';
+
+  // Wi-Fi and Firmware version are genuinely properties of the physical
+  // device itself -- a server-side/browser preview has no way to know
+  // either one, unlike everything else on this screen. Shown honestly as
+  // preview-only placeholders (neutral dot) rather than guessed at.
   return '<div>' +
-    '<div class="config-row"><span>ADXO entries</span><span>' + (previewStatus.adxo.entry_count ?? '?') + '</span></div>' +
-    '<div class="config-row"><span>ADXO last updated</span><span>' + (previewStatus.adxo.updated ? ageString(previewStatus.adxo.updated) : 'never') + '</span></div>' +
-    '<div class="config-row"><span>HamAlert listener</span><span>' + hamalertLine + '</span></div>' +
-    '<div class="config-row"><span>Watched count</span><span>' + previewStatus.watched_count + '</span></div>' +
-    '<div class="config-row"><span>Firmware version</span><span>preview (no device)</span></div>' +
-  '</div>';
+    '<div class="config-row"><span>' + configDot('var(--muted)') + 'Wi-Fi</span><span>n/a (browser preview)</span></div>' +
+    '<div class="config-row"><span>' + configDot(adxo.poll_ok ? 'var(--accent-active)' : 'var(--danger)') + 'ADXO Poll</span><span>' + pollLine + '</span></div>' +
+    '<div class="config-row"><span>' + configDot(hamalertConnected ? 'var(--accent-active)' : 'var(--muted)') + 'HamAlert Telnet</span><span>' + hamalertLine + '</span></div>' +
+    '<div class="config-row"><span>' + configDot('var(--accent-active)') + 'Watchlist</span><span>' + previewStatus.watched_count + ' watched</span></div>' +
+    '<div class="config-row"><span>' + configDot('var(--accent-active)') + 'Curate at</span><span>' + escapeHtml(previewStatus.curate_at || '--') + '</span></div>' +
+    '<div class="config-row"><span>' + configDot('var(--muted)') + 'Firmware</span><span>n/a (browser preview)</span></div>' +
+    '</div>' +
+    '<div style="display: flex; gap: 0.75rem; margin-top: 1rem;">' +
+      '<button onclick="loadData()" style="flex: 1;">Force Refresh</button>' +
+      '<button disabled style="flex: 1; opacity: 0.5; cursor: default;">Wi-Fi Setup (coming soon)</button>' +
+    '</div>';
 }
 
 function renderActiveTab() {

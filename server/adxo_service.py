@@ -1849,17 +1849,32 @@ def api_preview_status():
     service's 8083), which a browser blocks as cross-origin unless the listener
     explicitly sets CORS headers (it doesn't, and shouldn't need to just for this).
     Same server-side-proxy pattern the /hamalert page already uses, just also
-    exposed as JSON here for the preview page's own fetch() calls."""
+    exposed as JSON here for the preview page's own fetch() calls.
+
+    2026-09-10: added poll_ok and curate_at, needed once the Config tab was
+    rebuilt to match the real device's actual row set precisely (Wi-Fi, ADXO
+    Poll, HamAlert Telnet, Watchlist, Curate At, Firmware) rather than an
+    earlier, looser approximation. poll_ok reuses last_fetch_status's own
+    existing "ok"/"not_modified"/"error" values (both non-error states count
+    as healthy -- a 304 Not Modified is a successful check, not a failure).
+    curate_at uses the actual request host, since that's genuinely known
+    here and matches the real device's own config (both point at this same
+    server) -- unlike Wi-Fi connection status or firmware version, which are
+    properties of the physical device itself and can't be known from a
+    server-side/browser context at all; the Config tab shows an explicit
+    preview-only placeholder for those two instead of guessing."""
     hamalert_status, hamalert_err = _hamalert_get("/api/hamalert/status")
     with _lock:
         adxo_updated = _state["updated"]
         adxo_entry_count = len(_state["entries"])
+        poll_ok = _state.get("last_fetch_status") != "error"
     with _watched_lock:
         watched_count = len(_watched)
     return jsonify({
-        "adxo": {"updated": adxo_updated, "entry_count": adxo_entry_count},
+        "adxo": {"updated": adxo_updated, "entry_count": adxo_entry_count, "poll_ok": poll_ok},
         "hamalert": hamalert_status if hamalert_status else {"unreachable": True, "error": hamalert_err},
         "watched_count": watched_count,
+        "curate_at": request.host_url.rstrip("/"),
     })
 
 
