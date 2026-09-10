@@ -1068,6 +1068,9 @@ def healthz():
 
 @app.route("/api/adxo")
 def api_adxo():
+    # Consumed externally by the Propagation Dashboard project (Ham Shack
+    # Automation) as of 2026-09-10 -- not documented in any README by design,
+    # see DXMon's own Joplin note. Do not remove/reshape without checking there.
     with _lock:
         return jsonify({
             "updated": _state["updated"],
