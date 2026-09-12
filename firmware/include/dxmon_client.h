@@ -21,6 +21,14 @@ struct WatchedEntry {
     char mode[16];             // raw lowercase, e.g. "cw" -- uppercase at display time
     char frequency[16];        // raw string, e.g. "18.0847"
     char received_at[32];      // raw ISO 8601 -- see main.cpp's format_short_datetime()
+    // Added 2026-09-12: PropMon's current condition for this spot's own band
+    // ("good"/"fair"/"poor"), or empty string if unavailable (PropMon
+    // unreachable, or the band wasn't in PropMon's response) -- same
+    // null-as-empty-string convention already used for `comment` below.
+    // Real motivation (Dan): DXMon and PropMon aren't guaranteed to be in
+    // the same physical spot, so a spot's frequency alone doesn't say
+    // whether that band is actually any good right now.
+    char band_condition[8];
     char comment[64];          // operator comment on the spot -- only present on real
                                 // "cluster" source spots (a human typed it); empty on
                                 // automated sources (rbn/pskreporter). Confirmed real
@@ -94,6 +102,13 @@ struct SpotInfo {
     char frequency[16];
     char received_at[32];
     char comment[64];
+    // Added 2026-09-12: same PropMon band-condition field as WatchedEntry's
+    // own -- see its comment there for the full design. Applies to both
+    // last_spot and last_seen (this struct is shared by both), even though
+    // firmware currently only ever displays it for a live (last_spot) hit --
+    // Overview's Tier 2 doesn't show frequency/band at all today, so there's
+    // no natural place to show a band condition there yet either.
+    char band_condition[8];
     // Added 2026-09-05: beam heading to the spotted callsign, for Needed hits only
     // (Watched already shows its own callsign prominently as the entry itself, so
     // this wasn't requested there). Mirrors /api/dxmon/needed's own "beam" field,

@@ -45,6 +45,7 @@ using namespace esp_panel::board;
 #define COLOR_DOT_GRAY      lv_color_hex(0x5a6478)
 #define COLOR_BADGE_BG      lv_color_hex(0x1a2233)
 #define COLOR_BADGE_TEXT    lv_color_hex(0x8a94a6)
+#define COLOR_STATUS_RED    lv_color_hex(0xe05c5c)  // 2026-09-12: PropMon "poor" band condition
 
 // ---------------------------------------------------------------------------
 // Lightweight date/time formatting -- see 2026-08-29 session notes: real
@@ -145,6 +146,39 @@ static bool spot_is_stale(const char *spot_received_at, const char *response_upd
 static lv_color_t stale_aware_color(bool is_stale, lv_color_t fresh_color)
 {
     return is_stale ? COLOR_TEXT_MUTED : fresh_color;
+}
+
+/** Maps a band_condition string ("good"/"fair"/"poor", or empty when PropMon
+ * is unreachable or hasn't rated that band) to a dot color. 2026-09-12 --
+ * reuses the same green/amber/red vocabulary already established elsewhere
+ * (status dots, staleness) rather than inventing a new one. Unknown/empty
+ * maps to the existing neutral gray dot color, matching how every other
+ * "no data available" state in this app is already shown. */
+static lv_color_t band_condition_color(const char *cond)
+{
+    if (!cond) return COLOR_DOT_GRAY;
+    if (strcmp(cond, "good") == 0) return COLOR_STATUS_GREEN;
+    if (strcmp(cond, "fair") == 0) return COLOR_ACCENT_AMBER;
+    if (strcmp(cond, "poor") == 0) return COLOR_STATUS_RED;
+    return COLOR_DOT_GRAY;
+}
+
+/** Shows/hides and positions a band-condition dot immediately to the right
+ * of an already-laid-out label (typically a frequency label). Hides the dot
+ * entirely rather than showing gray when cond is empty, on the theory that
+ * "we don't know" is better shown as absence than as a fourth, easily-
+ * confused-with-real-data color -- open to revisiting once this is actually
+ * seen on real hardware. */
+static void update_band_dot(lv_obj_t *dot, lv_obj_t *anchor_label, const char *cond)
+{
+    if (!cond || cond[0] == '\0') {
+        lv_obj_add_flag(dot, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_clear_flag(dot, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_bg_color(dot, band_condition_color(cond), 0);
+    lv_obj_update_layout(anchor_label);
+    lv_obj_align_to(dot, anchor_label, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
 }
 
 /** Formats just "N deg / N mi" (empty string if no beam data) -- added
@@ -348,12 +382,14 @@ static lv_obj_t *make_pill_badge(lv_obj_t *parent, const char *text, int x, int 
 struct OverviewWidgets {
     lv_obj_t *wifi_glyph;
     lv_obj_t *status_text;   // header's own status label, needed to position the glyph
+    lv_obj_t *watched_panel; // 2026-09-12: whole-panel container, for the new-spot border flash
     lv_obj_t *watched_status_lbl;
     lv_obj_t *watched_status_dot;
     lv_obj_t *watched_callsign;
     lv_obj_t *watched_beam;   // added 2026-09-06 -- see make_screen_overview() for detail
     lv_obj_t *watched_dxcc;
     lv_obj_t *watched_freq;
+    lv_obj_t *watched_band_dot;  // 2026-09-12: PropMon band-condition indicator
     lv_obj_t *watched_mode_badge;
     lv_obj_t *watched_mode_lbl;
     lv_obj_t *watched_last_spot;
@@ -373,6 +409,7 @@ static OverviewWidgets ov;
  * the old NEEDED/WANTED badge used, just renamed to match the new terminology.
  */
 struct NeededWidgets {
+    lv_obj_t *panel;  // 2026-09-12: whole-panel container, for the new-spot border flash
     lv_obj_t *status_lbl;
     lv_obj_t *loading_lbl;
 
@@ -382,6 +419,7 @@ struct NeededWidgets {
     lv_obj_t *t1_entity;
     lv_obj_t *t1_subtitle;
     lv_obj_t *t1_freq;
+    lv_obj_t *t1_band_dot;  // 2026-09-12: PropMon band-condition indicator
     lv_obj_t *t1_mode_badge;
     lv_obj_t *t1_mode_lbl;
     lv_obj_t *t1_when;
@@ -423,15 +461,27 @@ static uint32_t ticker_last_change_ms = 0;
 static bool needed_tier3_active = false;
 
 // ---------------------------------------------------------------------------
-// New-spot flash -- 2026-09-12. Overview-only alert: a genuinely NEW live hit
-// (not just the same hit re-shown on a routine refresh) turns the callsign
-// text green for NEW_SPOT_FLASH_MS, then reverts to its normal color. Two
-// independent targets: Watched Overview's single callsign label, and Needed
-// Overview's Tier 1 (live) callsign pair (shadow + main, matching the
-// existing double-draw bold-text technique used everywhere else for this
-// pair). Needed's Tier 2 (last-seen, non-live) deliberately does NOT flash --
-// a transition into Tier 2 means a hit went stale/left the live buffer, not
-// a new one arriving; any genuinely new spot always shows up in Tier 1 first.
+// New-spot flash -- 2026-09-12, revised same day per Dan's feedback: a real
+// BLINK (not a solid 3-second hold), and the whole panel (not just the
+// callsign) flashes, to actually catch attention from a glance rather than
+// just changing a small piece of text.
+//
+// Design choice worth explaining: the panel's BORDER blinks green (thick
+// during the "on" phase), not its background fill. A full green background
+// fill was considered and rejected -- the callsign text also turns green
+// while blinking, and green text on a solid green background would go
+// briefly invisible during every "on" phase, working against the whole
+// point of the effect. A border flash avoids that collision entirely (it's
+// on the panel's edge, not behind the text) while still being a genuinely
+// whole-panel, hard-to-miss effect, not just a small text-color change.
+//
+// Two independent targets: Watched Overview's panel + single callsign
+// label, and Needed Overview's panel + Tier 1 (live) callsign pair (shadow +
+// main, matching the existing double-draw bold-text technique used
+// everywhere else for this pair). Needed's Tier 2 (last-seen, non-live)
+// deliberately does NOT flash -- a transition into Tier 2 means a hit went
+// stale/left the live buffer, not a new one arriving; any genuinely new
+// spot always shows up in Tier 1 first.
 //
 // Real interaction with the scheduled reboot (config.h, ~every 15 min):
 // without a guard, the first data fetch after every reboot would look "new"
@@ -440,13 +490,20 @@ static bool needed_tier3_active = false;
 // exist for exactly this reason -- only a real, in-session identity change
 // (callsign + timestamp) triggers the flash, never the first populate after
 // boot/reboot.
-#define NEW_SPOT_FLASH_MS 3000
+#define NEW_SPOT_FLASH_TOTAL_MS   3000  // total flash duration
+#define NEW_SPOT_BLINK_HALF_MS     300  // on/off half-period -- 5 full blinks in 3s
+#define FLASH_BORDER_WIDTH_ON        4
+#define FLASH_BORDER_WIDTH_OFF       1  // matches make_panel()'s own default
 
 struct FlashState {
     bool active = false;
-    uint32_t until_ms = 0;
-    lv_obj_t *label_a = nullptr;  // primary label (Watched: the only one; Needed: shadow)
-    lv_obj_t *label_b = nullptr;  // secondary label (Needed: main callsign); nullptr if unused
+    uint32_t until_ms = 0;        // when the whole flash sequence ends
+    uint32_t next_toggle_ms = 0;  // when the next on/off toggle happens
+    bool on_phase = false;        // true = currently showing the green "on" state
+    lv_obj_t *panel = nullptr;              // whole panel container to border-flash
+    lv_color_t panel_normal_border = COLOR_PANEL_BORDER;
+    lv_obj_t *label_a = nullptr;  // primary callsign label (Watched: the only one; Needed: shadow)
+    lv_obj_t *label_b = nullptr;  // secondary callsign label (Needed: main callsign); nullptr if unused
     lv_color_t normal_a = COLOR_TEXT_PRIMARY;
     lv_color_t normal_b = COLOR_TEXT_PRIMARY;
 };
@@ -458,43 +515,68 @@ static bool watched_flash_initialized = false;
 static char needed_t1_flash_key[64] = "";
 static bool needed_t1_flash_initialized = false;
 
-/** Turns on the green flash for one or two labels, remembering the color(s)
- * to revert to once NEW_SPOT_FLASH_MS elapses. Callers only invoke this
- * after confirming a real key change -- this function itself does no such
- * check, so it always flashes when called. */
-static void trigger_flash(FlashState &fs, lv_obj_t *label_a, lv_color_t normal_a,
+/** Sets one FlashState's panel border + label(s) to either the green "on"
+ * phase or their normal "off" phase. Shared by trigger_flash() (first "on")
+ * and update_flash_states() (every subsequent toggle and the final revert). */
+static void apply_flash_phase(FlashState &fs, bool green)
+{
+    if (fs.panel) {
+        lv_obj_set_style_border_color(fs.panel, green ? COLOR_STATUS_GREEN : fs.panel_normal_border, 0);
+        lv_obj_set_style_border_width(fs.panel, green ? FLASH_BORDER_WIDTH_ON : FLASH_BORDER_WIDTH_OFF, 0);
+    }
+    if (fs.label_a) {
+        lv_obj_set_style_text_color(fs.label_a, green ? COLOR_STATUS_GREEN : fs.normal_a, 0);
+    }
+    if (fs.label_b) {
+        lv_obj_set_style_text_color(fs.label_b, green ? COLOR_STATUS_GREEN : fs.normal_b, 0);
+    }
+}
+
+/** Starts a blinking flash on a panel + one or two labels, remembering the
+ * normal color(s)/border to return to once NEW_SPOT_FLASH_TOTAL_MS elapses.
+ * Callers only invoke this after confirming a real key change -- this
+ * function itself does no such check, so it always (re)starts the blink
+ * when called. */
+static void trigger_flash(FlashState &fs, lv_obj_t *panel, lv_color_t panel_normal_border,
+                           lv_obj_t *label_a, lv_color_t normal_a,
                            lv_obj_t *label_b, lv_color_t normal_b)
 {
+    fs.panel = panel;
+    fs.panel_normal_border = panel_normal_border;
     fs.label_a = label_a;
     fs.label_b = label_b;
     fs.normal_a = normal_a;
     fs.normal_b = normal_b;
     fs.active = true;
-    fs.until_ms = millis() + NEW_SPOT_FLASH_MS;
-    lv_obj_set_style_text_color(label_a, COLOR_STATUS_GREEN, 0);
-    if (label_b) lv_obj_set_style_text_color(label_b, COLOR_STATUS_GREEN, 0);
+    fs.on_phase = true;
+    uint32_t now = millis();
+    fs.until_ms = now + NEW_SPOT_FLASH_TOTAL_MS;
+    fs.next_toggle_ms = now + NEW_SPOT_BLINK_HALF_MS;
+    apply_flash_phase(fs, true);
 }
 
 /** Called every loop() iteration (cheap early-out otherwise via the active
- * flag) -- reverts each active flash's label(s) back to their normal color
- * once the 3-second window elapses. Deliberately independent of the 60s
- * refresh cycle, since the flash needs to clear on its own timer, not on
- * the next data fetch. Known, accepted minor edge case: if a Force Refresh
- * happens to land inside an active 3-second flash window (unlikely -- would
+ * flag) -- advances each active flash's on/off blink and reverts everything
+ * to normal once the total 3-second window elapses. Deliberately independent
+ * of the 60s refresh cycle, since the blink needs to run on its own timer,
+ * not on the next data fetch. Known, accepted minor edge case: if a Force
+ * Refresh happens to land inside an active flash window (unlikely -- would
  * require tapping it within 3 seconds of a spot arriving), the refresh's own
- * re-render can cut the flash short. Benign, not worth guarding against. */
+ * re-render can interrupt the blink. Benign, not worth guarding against. */
 static void update_flash_states(void)
 {
-    if (watched_flash.active && millis() >= watched_flash.until_ms) {
-        lv_obj_set_style_text_color(watched_flash.label_a, watched_flash.normal_a, 0);
-        watched_flash.active = false;
-    }
-    if (needed_t1_flash.active && millis() >= needed_t1_flash.until_ms) {
-        lv_obj_set_style_text_color(needed_t1_flash.label_a, needed_t1_flash.normal_a, 0);
-        if (needed_t1_flash.label_b) {
-            lv_obj_set_style_text_color(needed_t1_flash.label_b, needed_t1_flash.normal_b, 0);
+    uint32_t now = millis();
+    FlashState *all[] = {&watched_flash, &needed_t1_flash};
+    for (FlashState *fs : all) {
+        if (!fs->active) continue;
+        if (now >= fs->until_ms) {
+            apply_flash_phase(*fs, false);
+            fs->active = false;
+        } else if (now >= fs->next_toggle_ms) {
+            fs->on_phase = !fs->on_phase;
+            apply_flash_phase(*fs, fs->on_phase);
+            fs->next_toggle_ms += NEW_SPOT_BLINK_HALF_MS;
         }
-        needed_t1_flash.active = false;
     }
 }
 
@@ -516,6 +598,7 @@ static lv_obj_t *make_screen_overview(void)
 
     // --- WATCHED panel (left) -- built with honest "not yet fetched" state ---
     lv_obj_t *watched = make_panel(scr, 16, 72, 378, 316);
+    ov.watched_panel = watched;  // 2026-09-12: for the new-spot border flash
     // Tap-to-drill-down handled by a transparent overlay added at the end of
     // this panel's construction (see below, after all child widgets exist) --
     // a direct handler here doesn't work, since LVGL's click-testing finds
@@ -542,6 +625,15 @@ static lv_obj_t *make_screen_overview(void)
 
     make_label(watched, "FREQUENCY", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 20, 124);
     ov.watched_freq = make_label(watched, "--", &lv_font_montserrat_16, COLOR_TEXT_PRIMARY, 20, 142);
+    // 2026-09-12: PropMon band-condition dot, positioned relative to the freq
+    // label at render time (see update_band_dot()) since frequency text width
+    // varies. Starts hidden -- shown only once real condition data arrives.
+    ov.watched_band_dot = lv_obj_create(watched);
+    lv_obj_remove_style_all(ov.watched_band_dot);
+    lv_obj_set_size(ov.watched_band_dot, 10, 10);
+    lv_obj_set_style_radius(ov.watched_band_dot, 5, 0);
+    lv_obj_set_style_bg_opa(ov.watched_band_dot, LV_OPA_COVER, 0);
+    lv_obj_add_flag(ov.watched_band_dot, LV_OBJ_FLAG_HIDDEN);
 
     make_label(watched, "MODE", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 164, 124);
     ov.watched_mode_badge = lv_obj_create(watched);
@@ -612,6 +704,7 @@ static lv_obj_t *make_screen_overview(void)
     // rather than destroyed/rebuilt each refresh -- matches the stable, efficient
     // pattern already proven for Overview's WATCHED panel.
     lv_obj_t *needed = make_panel(scr, 406, 72, 378, 316);
+    nw.panel = needed;  // 2026-09-12: for the new-spot border flash
     // Tap-to-drill-down handled by a transparent overlay added at the end of
     // this panel's construction (see below) -- same fix as WATCHED, for the
     // same reason (t1/t2/t3_group and their children are all clickable-by-
@@ -659,6 +752,14 @@ static lv_obj_t *make_screen_overview(void)
 
     make_label(nw.t1_group, "FREQUENCY", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 20, 150);
     nw.t1_freq = make_label(nw.t1_group, "--", &lv_font_montserrat_16, COLOR_TEXT_PRIMARY, 20, 168);
+    // 2026-09-12: PropMon band-condition dot -- same technique as Watched's own,
+    // see comment there.
+    nw.t1_band_dot = lv_obj_create(nw.t1_group);
+    lv_obj_remove_style_all(nw.t1_band_dot);
+    lv_obj_set_size(nw.t1_band_dot, 10, 10);
+    lv_obj_set_style_radius(nw.t1_band_dot, 5, 0);
+    lv_obj_set_style_bg_opa(nw.t1_band_dot, LV_OPA_COVER, 0);
+    lv_obj_add_flag(nw.t1_band_dot, LV_OBJ_FLAG_HIDDEN);
 
     make_label(nw.t1_group, "MODE", &lv_font_montserrat_12, COLOR_TEXT_MUTED, 164, 150);
     nw.t1_mode_badge = lv_obj_create(nw.t1_group);
@@ -789,6 +890,7 @@ static void update_overview_watched(const WatchedData &data)
         lv_label_set_text(ov.watched_beam, "");
         lv_label_set_text(ov.watched_dxcc, "Watchlist is empty");
         lv_label_set_text(ov.watched_freq, "--");
+        lv_obj_add_flag(ov.watched_band_dot, LV_OBJ_FLAG_HIDDEN);
         lv_label_set_text(ov.watched_mode_lbl, "--");
         lv_label_set_text(ov.watched_last_spot, "--");
         lv_label_set_text(ov.watched_comment, "");
@@ -831,6 +933,8 @@ static void update_overview_watched(const WatchedData &data)
         char freq_buf[24];
         snprintf(freq_buf, sizeof(freq_buf), "%s MHz", e.frequency);
         lv_label_set_text(ov.watched_freq, freq_buf);
+        // 2026-09-12: PropMon band-condition dot -- see update_band_dot() comment.
+        update_band_dot(ov.watched_band_dot, ov.watched_freq, e.band_condition);
 
         char mode_buf[16];
         strncpy(mode_buf, e.mode, sizeof(mode_buf) - 1);
@@ -851,6 +955,7 @@ static void update_overview_watched(const WatchedData &data)
         }
     } else {
         lv_label_set_text(ov.watched_freq, "--");
+        lv_obj_add_flag(ov.watched_band_dot, LV_OBJ_FLAG_HIDDEN);
         lv_label_set_text(ov.watched_mode_lbl, "--");
         lv_label_set_text(ov.watched_last_spot, "Not yet spotted");
         lv_label_set_text(ov.watched_comment, "");
@@ -871,7 +976,8 @@ static void update_overview_watched(const WatchedData &data)
         }
         if (watched_flash_initialized && new_key[0] != '\0' &&
             strcmp(new_key, watched_flash_key) != 0) {
-            trigger_flash(watched_flash, ov.watched_callsign, COLOR_TEXT_PRIMARY, nullptr, COLOR_TEXT_PRIMARY);
+            trigger_flash(watched_flash, ov.watched_panel, COLOR_PANEL_BORDER,
+                          ov.watched_callsign, COLOR_TEXT_PRIMARY, nullptr, COLOR_TEXT_PRIMARY);
         }
         strncpy(watched_flash_key, new_key, sizeof(watched_flash_key) - 1);
         watched_flash_key[sizeof(watched_flash_key) - 1] = '\0';
@@ -1006,6 +1112,9 @@ static void update_overview_needed(const NeededData &data)
         char freq_buf[24];
         snprintf(freq_buf, sizeof(freq_buf), "%s MHz", t.last_spot.frequency);
         lv_label_set_text(nw.t1_freq, freq_buf);
+        // 2026-09-12: PropMon band-condition dot -- see update_band_dot() comment
+        // near the top of this file.
+        update_band_dot(nw.t1_band_dot, nw.t1_freq, t.last_spot.band_condition);
 
         char mode_buf[16];
         strncpy(mode_buf, t.last_spot.mode, sizeof(mode_buf) - 1);
@@ -1043,7 +1152,8 @@ static void update_overview_needed(const NeededData &data)
             char new_key[64];
             snprintf(new_key, sizeof(new_key), "%s|%s", t.last_spot.callsign, t.last_spot.received_at);
             if (needed_t1_flash_initialized && strcmp(new_key, needed_t1_flash_key) != 0) {
-                trigger_flash(needed_t1_flash, nw.t1_spotted_shadow, t1_cs_color,
+                trigger_flash(needed_t1_flash, nw.panel, COLOR_PANEL_BORDER,
+                              nw.t1_spotted_shadow, t1_cs_color,
                               nw.t1_spotted_callsign, t1_cs_color);
             }
             strncpy(needed_t1_flash_key, new_key, sizeof(needed_t1_flash_key) - 1);
