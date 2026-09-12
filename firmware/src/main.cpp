@@ -2326,12 +2326,16 @@ static void make_target_row(lv_obj_t *container, int index, const NeededEntry &t
     // frequency text isn't width-constrained and can run wide enough to
     // collide with a top-right badge on the same row. Bottom-right is clear
     // in every state (live, last-seen, and "Never spotted", which is
-    // vertically centered, not bottom-anchored). Neutral badge colors
-    // deliberately, distinct from ENTITY/SLOT's amber/blue and from the
-    // live-status dot's green, so it can't be mistaken for either. Star
-    // glyph considered and deferred -- not yet confirmed safe against this
-    // embedded font's Unicode coverage (same class of gotcha already hit
-    // once for curly quotes); a text badge carries zero glyph risk.
+    // vertically centered, not bottom-anchored). Second hardware test found
+    // the first bottom-right offset (-10) still just barely touched the
+    // "Last hit"/timestamp label sitting right above it -- tightened to -4
+    // for real clearance, confirmed against actual rendered text, not just
+    // arithmetic. Neutral badge colors deliberately, distinct from
+    // ENTITY/SLOT's amber/blue and from the live-status dot's green, so it
+    // can't be mistaken for either. Star glyph considered and deferred --
+    // not yet confirmed safe against this embedded font's Unicode coverage
+    // (same class of gotcha already hit once for curly quotes); a text
+    // badge carries zero glyph risk.
     if (t.pinned) {
         lv_obj_t *pin_badge = lv_obj_create(card);
         lv_obj_remove_style_all(pin_badge);
@@ -2341,7 +2345,7 @@ static void make_target_row(lv_obj_t *container, int index, const NeededEntry &t
         lv_obj_set_style_bg_color(pin_badge, COLOR_BADGE_BG, 0);
         lv_obj_set_style_bg_opa(pin_badge, LV_OPA_COVER, 0);
         lv_obj_set_style_border_color(pin_badge, COLOR_BADGE_TEXT, 0);
-        lv_obj_align(pin_badge, LV_ALIGN_BOTTOM_RIGHT, -20, -10);
+        lv_obj_align(pin_badge, LV_ALIGN_BOTTOM_RIGHT, -20, -4);
         lv_obj_t *pin_lbl = lv_label_create(pin_badge);
         lv_label_set_text(pin_lbl, "PINNED");
         lv_obj_set_style_text_font(pin_lbl, &lv_font_montserrat_12, 0);
