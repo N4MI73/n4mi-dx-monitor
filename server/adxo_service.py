@@ -624,6 +624,10 @@ def _add_needed(entity, band, mode, note=""):
         "mode": mode,
         "note": (note or "").strip(),
         "added": datetime.now(EASTERN).isoformat(),
+        # 2026-09-12: pin/favorite -- see the pin-management functions below for
+        # the full design. Defaults false/unset; pin_order only gets a real value
+        # once an entry is actually pinned.
+        "pinned": False,
     }
     with _needed_lock:
         _needed.append(entry)
@@ -661,6 +665,75 @@ def _update_needed(needed_id, entity, band, mode, note=""):
                 _save_needed()
                 return w, None
     return None, "Not found."
+
+
+# --------------------------------------------------------------------------------------
+# Pin/favorite -- added 2026-09-12
+# --------------------------------------------------------------------------------------
+# Real motivation (Dan): as the curated list grows, pure recency-based sorting can
+# bury a personally high-priority target below a dozen more recently-active but
+# lower-priority entries whenever nothing's currently live for it. Sort priority,
+# confirmed with Dan: live-now (recency, unchanged) > pinned-with-nothing-live
+# (by pin_order) > everything else (alphabetical, unchanged). A pin never lets a
+# quiet entry outrank a real live hit elsewhere -- that top tier is untouched.
+#
+# pin_order is only meaningful while pinned=True; a newly-pinned entry gets
+# max-existing + 1, landing at the bottom of the pinned group by default --
+# reordered afterward via _move_pinned_needed(), not assigned up front.
+
+
+def _pin_needed(needed_id):
+    """Pins an entry (no-op if already pinned). Returns True if the entry was
+    found at all (pinned or not), False if the id doesn't exist."""
+    with _needed_lock:
+        for n in _needed:
+            if n["id"] == needed_id:
+                if not n.get("pinned"):
+                    max_order = max(
+                        (x.get("pin_order", 0) for x in _needed if x.get("pinned")),
+                        default=0,
+                    )
+                    n["pinned"] = True
+                    n["pin_order"] = max_order + 1
+                    _save_needed()
+                return True
+    return False
+
+
+def _unpin_needed(needed_id):
+    """Unpins an entry (no-op if not pinned). Leaves pin_order as-is on the
+    entry -- harmless, since an unpinned entry's pin_order is never read."""
+    with _needed_lock:
+        for n in _needed:
+            if n["id"] == needed_id:
+                if n.get("pinned"):
+                    n["pinned"] = False
+                    _save_needed()
+                return True
+    return False
+
+
+def _move_pinned_needed(needed_id, direction):
+    """direction: -1 moves the entry earlier (up) in pin priority, +1 moves it
+    later (down). Swaps pin_order with whichever pinned entry currently sits
+    adjacent in that direction. No-op if the entry isn't pinned, or is already
+    at that end of the pinned group. Returns True if a swap happened."""
+    with _needed_lock:
+        pinned = sorted(
+            (n for n in _needed if n.get("pinned")),
+            key=lambda n: n.get("pin_order", 0),
+        )
+        idx = next((i for i, n in enumerate(pinned) if n["id"] == needed_id), None)
+        if idx is None:
+            return False
+        swap_idx = idx + direction
+        if swap_idx < 0 or swap_idx >= len(pinned):
+            return False
+        a, b = pinned[idx], pinned[swap_idx]
+        a["pin_order"], b["pin_order"] = b.get("pin_order", 0), a.get("pin_order", 0)
+        _save_needed()
+        return True
+
 
 
 # --------------------------------------------------------------------------------------
@@ -1661,6 +1734,17 @@ def _get_spot_history(key):
         return list(_spot_history.get(key, []))
 
 
+def _needed_sort_tier(item):
+    """0 = has a live spot right now, 1 = pinned with nothing live, 2 = everything
+    else. See the sort-priority comment in _build_dxmon_needed() for the full
+    design; mirrors _sort_key_group()'s role for Watched above."""
+    if item["last_spot"] is not None:
+        return 0
+    if item["pinned"]:
+        return 1
+    return 2
+
+
 def _build_dxmon_needed():
     """Unified 2026-09-04 -- one curated list (_needed), no ADXO cross-reference
     (ADXO is Watched-only going forward -- a curated Needed entry has no DXpedition
@@ -1746,6 +1830,8 @@ def _build_dxmon_needed():
             "added": n.get("added", ""),
             "last_spot": last_spot,
             "last_seen": last_seen,
+            # 2026-09-12: pin/favorite -- see the pin-management section above.
+            "pinned": bool(n.get("pinned")),
         })
 
     # Real design change (2026-09-08), matching Watched's own analogous change:
@@ -1758,16 +1844,28 @@ def _build_dxmon_needed():
     # independent scan for live/last-seen entries, not relying on array order,
     # so it's unaffected by this change.
     #
+    # Extended 2026-09-12 with a real third tier, confirmed with Dan: pinned
+    # entries with nothing currently live float above the plain alphabetical
+    # group, ordered by pin_order -- but a pin never outranks an actual live
+    # hit elsewhere, so the live tier is completely untouched by this.
+    #
     # Same tied-sentinel technique as the Watched fix above, for the same
-    # reason: the entity-alpha pass must leave has-a-live-spot entries alone
-    # entirely, or it would scramble the recency order the earlier pass
+    # reason: each pass must leave entries outside its own tier completely
+    # alone, or it would scramble ordering an earlier, less-significant pass
     # already established for them.
-    result.sort(key=lambda item: item["entity"] if item["last_spot"] is None else "")
+    result.sort(
+        key=lambda item: item["entity"]
+        if (item["last_spot"] is None and not item["pinned"]) else ""
+    )
+    result.sort(
+        key=lambda item: item.get("pin_order", 0)
+        if (item["last_spot"] is None and item["pinned"]) else 0
+    )
     result.sort(
         key=lambda item: item["last_spot"]["received_at"] if item["last_spot"] else "",
         reverse=True,
     )
-    result.sort(key=lambda item: item["last_spot"] is None)
+    result.sort(key=lambda item: _needed_sort_tier(item))
     return result
 
 
@@ -2040,7 +2138,15 @@ def page_watch_remove(watched_id):
 @app.route("/needed")
 def page_needed():
     with _needed_lock:
-        entries = sorted(_needed, key=lambda w: w["added"], reverse=True)
+        entries = list(_needed)
+    # 2026-09-12: pinned entries float to the top here too (not just on the
+    # device), grouped by pin_order, so the up/down reorder controls have a
+    # contiguous group to operate on rather than pinned entries scattered
+    # across the whole added-date-sorted list. Everything else keeps its
+    # existing newest-added-first order, unchanged.
+    entries.sort(key=lambda w: w["added"], reverse=True)
+    entries.sort(key=lambda w: w.get("pin_order", 0) if w.get("pinned") else 0)
+    entries.sort(key=lambda w: not w.get("pinned"))
     # 2026-09-05: attach days_old for the stale-entry flag -- computed here rather
     # than in the template, since Jinja has no built-in date arithmetic. Web-only,
     # not part of the entry shape returned by /api/dxmon/needed.
@@ -2078,10 +2184,15 @@ def page_needed_edit_form(needed_id):
     # rather than a separate template -- same form, same checkbox groups, just
     # pre-checked to the entry's current band/mode.
     with _needed_lock:
-        entries = sorted(_needed, key=lambda w: w["added"], reverse=True)
+        entries = list(_needed)
         edit_entry = next((w for w in _needed if w["id"] == needed_id), None)
     if not edit_entry:
         return redirect(url_for("page_needed"))
+    # 2026-09-12: same pinned-first ordering as page_needed() itself -- see
+    # comment there.
+    entries.sort(key=lambda w: w["added"], reverse=True)
+    entries.sort(key=lambda w: w.get("pin_order", 0) if w.get("pinned") else 0)
+    entries.sort(key=lambda w: not w.get("pinned"))
     entries = [dict(w, days_old=_needed_days_old(w)) for w in entries]
     return render_template("needed.html", entries=entries, edit_entry=edit_entry)
 
@@ -2095,6 +2206,30 @@ def page_needed_edit_save(needed_id):
         mode=", ".join(request.form.getlist("mode")),
         note=request.form.get("note"),
     )
+    return redirect(url_for("page_needed"))
+
+
+@app.route("/needed/pin/<needed_id>", methods=["POST"])
+def page_needed_pin(needed_id):
+    _pin_needed(needed_id)
+    return redirect(url_for("page_needed"))
+
+
+@app.route("/needed/unpin/<needed_id>", methods=["POST"])
+def page_needed_unpin(needed_id):
+    _unpin_needed(needed_id)
+    return redirect(url_for("page_needed"))
+
+
+@app.route("/needed/pin/<needed_id>/up", methods=["POST"])
+def page_needed_pin_up(needed_id):
+    _move_pinned_needed(needed_id, -1)
+    return redirect(url_for("page_needed"))
+
+
+@app.route("/needed/pin/<needed_id>/down", methods=["POST"])
+def page_needed_pin_down(needed_id):
+    _move_pinned_needed(needed_id, 1)
     return redirect(url_for("page_needed"))
 
 

@@ -30,7 +30,22 @@
             &mdash; <span class="callsign">{{ [w.band, w.mode] | select | join(' ') }}</span>
           {% endif %}
         </div>
-        <div style="display: flex; gap: 0.5rem;">
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          {% if w.pinned %}
+            <form method="post" action="{{ url_for('page_needed_pin_up', needed_id=w.id) }}" style="display: inline;">
+              <button type="submit" class="pin-move" title="Move up in pin priority">&#9650;</button>
+            </form>
+            <form method="post" action="{{ url_for('page_needed_pin_down', needed_id=w.id) }}" style="display: inline;">
+              <button type="submit" class="pin-move" title="Move down in pin priority">&#9660;</button>
+            </form>
+            <form method="post" action="{{ url_for('page_needed_unpin', needed_id=w.id) }}" style="display: inline;">
+              <button type="submit" class="pin-star pinned" title="Unpin">&#9733;</button>
+            </form>
+          {% else %}
+            <form method="post" action="{{ url_for('page_needed_pin', needed_id=w.id) }}" style="display: inline;">
+              <button type="submit" class="pin-star" title="Pin -- keeps this above the alphabetical group whenever nothing's currently live">&#9734;</button>
+            </form>
+          {% endif %}
           <a href="{{ url_for('page_needed_edit_form', needed_id=w.id) }}" class="edit-link">Edit</a>
           <form method="post" action="{{ url_for('page_needed_remove', needed_id=w.id) }}"
                 onsubmit="return confirm('Remove {{ w.entity }} {{ w.band }}{{ w.mode }} from needed?');">
@@ -137,6 +152,36 @@
       font-size: 0.85rem;
       align-self: center;
       text-decoration: underline;
+    }
+    /* 2026-09-12: pin/favorite controls -- kept as plain icon buttons (no
+       background/border) so they sit quietly alongside Edit/Remove rather
+       than competing with the badges above them for attention. */
+    .pin-star {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      font-size: 1.15rem;
+      line-height: 1;
+      padding: 0;
+      color: var(--muted);
+    }
+    .pin-star.pinned {
+      color: var(--accent-active);
+    }
+    .pin-star:hover {
+      color: var(--accent-active);
+    }
+    .pin-move {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      font-size: 0.7rem;
+      line-height: 1;
+      padding: 0 0.1rem;
+      color: var(--muted);
+    }
+    .pin-move:hover {
+      color: var(--text);
     }
   </style>
 {% endblock %}
