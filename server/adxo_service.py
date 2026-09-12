@@ -1054,6 +1054,86 @@ def _get_heading_to_callsign(callsign):
 
 
 # --------------------------------------------------------------------------------------
+# PropMon band-condition lookup -- added 2026-09-12
+# --------------------------------------------------------------------------------------
+# Consumes PropMon's own JSON endpoint as an external contract, per the series' own
+# established pattern (HamOps Console and the Ham Shack Automation propagation
+# dashboard both already do exactly this). PropMon lives in the Ham Shack Automation
+# project/repo and is treated here strictly as a read-only external API -- no shared
+# code, no reaching into PropMon's own repo, matching this project's own stated
+# boundary for sibling-project services.
+#
+# Real motivation (Dan, 2026-09-12): DXMon and PropMon aren't guaranteed to be sitting
+# in the same physical spot, so a spot's frequency alone doesn't tell you whether that
+# band is actually any good right now without walking over to check PropMon directly.
+#
+# Cached, not fetched per-spot -- PropMon's own ratings only meaningfully change on the
+# scale of minutes (they're driven by slow-moving solar data), not seconds, so a short
+# cache avoids hammering a sibling service on every /api/dxmon/watched or
+# /api/dxmon/needed request. Degrades to no condition data on any failure, matching
+# beam heading's own "never break the rest of the response" approach immediately above.
+#
+# No new frequency-to-band conversion needed: HamAlert's own spot payload already
+# resolves a `band` field on every spot (e.g. "17m", lowercase) -- the exact same
+# format PropMon's own JSON uses for its `bands[].band` field. This is a direct,
+# already-normalized join, not a new parsing problem.
+PROPMON_URL = os.environ.get("PROPMON_URL", "http://192.168.6.29:8076/api/instrument/propagation")
+PROPMON_CACHE_SECONDS = int(os.environ.get("PROPMON_CACHE_SECONDS", 300))
+PROPMON_REQUEST_TIMEOUT_SECONDS = 5
+
+_propmon_lock = threading.Lock()
+_propmon_state = {
+    "bands": {},      # band name (lowercase, e.g. "17m") -> status ("good"/"fair"/"poor")
+    "last_fetch": 0,  # time.time() of last attempt, success OR failure
+}
+
+
+def _get_band_condition(band):
+    """Returns 'good'/'fair'/'poor' for the given band name (e.g. '17m', already in
+    the same lowercase format HamAlert's spot data and PropMon's own JSON both use --
+    no conversion needed), or None if unavailable: no band given, PropMon unreachable,
+    or the band isn't present in PropMon's response. Never raises -- a missing
+    condition should never break the rest of /api/dxmon/watched or /api/dxmon/needed,
+    same principle as _get_heading_to_callsign() above.
+
+    Known caveat, inherited from PropMon itself (documented in the Desktop Instrument
+    Series brief): 160m and 30m are interpolated from neighboring bands there, not
+    natively rated -- lower confidence than the other 8 bands if either of those ever
+    comes back as the answer here. Not something to fix from this side; PropMon's own
+    code, per this project's own established boundary."""
+    if not band:
+        return None
+    band_key = band.strip().lower()
+
+    with _propmon_lock:
+        needs_refresh = (time.time() - _propmon_state["last_fetch"]) > PROPMON_CACHE_SECONDS
+
+    if needs_refresh:
+        try:
+            resp = requests.get(PROPMON_URL, timeout=PROPMON_REQUEST_TIMEOUT_SECONDS)
+            resp.raise_for_status()
+            payload = resp.json()
+            bands = {
+                b["band"].strip().lower(): b["status"].strip().lower()
+                for b in payload.get("bands", [])
+                if b.get("band") and b.get("status")
+            }
+            with _propmon_lock:
+                _propmon_state["bands"] = bands
+                _propmon_state["last_fetch"] = time.time()
+        except Exception as exc:  # noqa: BLE001 -- PropMon unreachable, bad JSON, etc.
+            log.debug("PropMon band-condition fetch failed, keeping last known-good: %s", exc)
+            with _propmon_lock:
+                # Stamp last_fetch even on failure -- a persistently-unreachable
+                # PropMon shouldn't retry on every single spot lookup; the same
+                # cache floor applies to failures as to successes.
+                _propmon_state["last_fetch"] = time.time()
+
+    with _propmon_lock:
+        return _propmon_state["bands"].get(band_key)
+
+
+# --------------------------------------------------------------------------------------
 # Flask app
 # --------------------------------------------------------------------------------------
 
@@ -1181,6 +1261,11 @@ def _find_last_spot_for_callsign(callsign, recent_spots):
                 "spotter": spot.get("spotter"),
                 "spotter_continent": spot.get("spotterContinent"),
                 "spotter_entity": spot.get("spotterEntity"),
+                # 2026-09-12: PropMon band-condition lookup -- see its own section
+                # for the full design. Attached to last_spot (not the entry as a
+                # whole, unlike beam) since condition is a property of the spot's
+                # actual band, not of the watched callsign itself.
+                "band_condition": _get_band_condition(spot.get("band")),
             }
     return None
 
@@ -1361,6 +1446,10 @@ def _spot_info_from_entry(entry, spot):
         "spotter": spot.get("spotter"),
         "spotter_continent": spot.get("spotterContinent"),
         "spotter_entity": spot.get("spotterEntity"),
+        # 2026-09-12: PropMon band-condition lookup -- see its own section for the
+        # full design. Also flows into spot_history.json via this same shared
+        # constructor, so historical spots carry their band condition too, for free.
+        "band_condition": _get_band_condition(spot.get("band")),
     }
 
 
