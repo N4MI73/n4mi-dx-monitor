@@ -422,6 +422,82 @@ static int ticker_index = 0;
 static uint32_t ticker_last_change_ms = 0;
 static bool needed_tier3_active = false;
 
+// ---------------------------------------------------------------------------
+// New-spot flash -- 2026-09-12. Overview-only alert: a genuinely NEW live hit
+// (not just the same hit re-shown on a routine refresh) turns the callsign
+// text green for NEW_SPOT_FLASH_MS, then reverts to its normal color. Two
+// independent targets: Watched Overview's single callsign label, and Needed
+// Overview's Tier 1 (live) callsign pair (shadow + main, matching the
+// existing double-draw bold-text technique used everywhere else for this
+// pair). Needed's Tier 2 (last-seen, non-live) deliberately does NOT flash --
+// a transition into Tier 2 means a hit went stale/left the live buffer, not
+// a new one arriving; any genuinely new spot always shows up in Tier 1 first.
+//
+// Real interaction with the scheduled reboot (config.h, ~every 15 min):
+// without a guard, the first data fetch after every reboot would look "new"
+// relative to freshly-reset in-memory state, flashing on an ordinary reboot
+// even when nothing actually changed. Both *_flash_initialized flags below
+// exist for exactly this reason -- only a real, in-session identity change
+// (callsign + timestamp) triggers the flash, never the first populate after
+// boot/reboot.
+#define NEW_SPOT_FLASH_MS 3000
+
+struct FlashState {
+    bool active = false;
+    uint32_t until_ms = 0;
+    lv_obj_t *label_a = nullptr;  // primary label (Watched: the only one; Needed: shadow)
+    lv_obj_t *label_b = nullptr;  // secondary label (Needed: main callsign); nullptr if unused
+    lv_color_t normal_a = COLOR_TEXT_PRIMARY;
+    lv_color_t normal_b = COLOR_TEXT_PRIMARY;
+};
+static FlashState watched_flash;
+static FlashState needed_t1_flash;
+
+static char watched_flash_key[64] = "";
+static bool watched_flash_initialized = false;
+static char needed_t1_flash_key[64] = "";
+static bool needed_t1_flash_initialized = false;
+
+/** Turns on the green flash for one or two labels, remembering the color(s)
+ * to revert to once NEW_SPOT_FLASH_MS elapses. Callers only invoke this
+ * after confirming a real key change -- this function itself does no such
+ * check, so it always flashes when called. */
+static void trigger_flash(FlashState &fs, lv_obj_t *label_a, lv_color_t normal_a,
+                           lv_obj_t *label_b, lv_color_t normal_b)
+{
+    fs.label_a = label_a;
+    fs.label_b = label_b;
+    fs.normal_a = normal_a;
+    fs.normal_b = normal_b;
+    fs.active = true;
+    fs.until_ms = millis() + NEW_SPOT_FLASH_MS;
+    lv_obj_set_style_text_color(label_a, COLOR_STATUS_GREEN, 0);
+    if (label_b) lv_obj_set_style_text_color(label_b, COLOR_STATUS_GREEN, 0);
+}
+
+/** Called every loop() iteration (cheap early-out otherwise via the active
+ * flag) -- reverts each active flash's label(s) back to their normal color
+ * once the 3-second window elapses. Deliberately independent of the 60s
+ * refresh cycle, since the flash needs to clear on its own timer, not on
+ * the next data fetch. Known, accepted minor edge case: if a Force Refresh
+ * happens to land inside an active 3-second flash window (unlikely -- would
+ * require tapping it within 3 seconds of a spot arriving), the refresh's own
+ * re-render can cut the flash short. Benign, not worth guarding against. */
+static void update_flash_states(void)
+{
+    if (watched_flash.active && millis() >= watched_flash.until_ms) {
+        lv_obj_set_style_text_color(watched_flash.label_a, watched_flash.normal_a, 0);
+        watched_flash.active = false;
+    }
+    if (needed_t1_flash.active && millis() >= needed_t1_flash.until_ms) {
+        lv_obj_set_style_text_color(needed_t1_flash.label_a, needed_t1_flash.normal_a, 0);
+        if (needed_t1_flash.label_b) {
+            lv_obj_set_style_text_color(needed_t1_flash.label_b, needed_t1_flash.normal_b, 0);
+        }
+        needed_t1_flash.active = false;
+    }
+}
+
 static lv_obj_t *make_screen_overview(void)
 {
     lv_obj_t *scr = make_screen();
@@ -780,6 +856,28 @@ static void update_overview_watched(const WatchedData &data)
         lv_label_set_text(ov.watched_comment, "");
     }
 
+    // 2026-09-12: new-spot flash detection -- see FlashState comment near the
+    // top of this file for the full reasoning. Only fires when a live spot's
+    // identity (callsign + timestamp) is genuinely different from what was
+    // last shown here -- not on the routine 60s re-fetch of the same still-
+    // active spot, not on the very first populate after boot/reboot, and not
+    // when a spot simply ages out of the live buffer (has_last_spot -> false).
+    {
+        char new_key[64];
+        if (e.has_last_spot) {
+            snprintf(new_key, sizeof(new_key), "%s|%s", e.callsign, e.received_at);
+        } else {
+            new_key[0] = '\0';
+        }
+        if (watched_flash_initialized && new_key[0] != '\0' &&
+            strcmp(new_key, watched_flash_key) != 0) {
+            trigger_flash(watched_flash, ov.watched_callsign, COLOR_TEXT_PRIMARY, nullptr, COLOR_TEXT_PRIMARY);
+        }
+        strncpy(watched_flash_key, new_key, sizeof(watched_flash_key) - 1);
+        watched_flash_key[sizeof(watched_flash_key) - 1] = '\0';
+        watched_flash_initialized = true;
+    }
+
     char through_buf[24];
     format_short_date(e.adxo_end, through_buf, sizeof(through_buf));
     lv_label_set_text(ov.watched_active_through, through_buf);
@@ -933,6 +1031,26 @@ static void update_overview_needed(const NeededData &data)
         lv_obj_set_style_text_color(nw.t1_spotted_shadow, t1_cs_color, 0);
         lv_label_set_text(nw.t1_spotted_callsign, t.last_spot.callsign);
         lv_obj_set_style_text_color(nw.t1_spotted_callsign, t1_cs_color, 0);
+
+        // 2026-09-12: new-spot flash detection -- see FlashState comment near
+        // the top of this file. This branch only ever runs while Tier 1 (a
+        // real live hit) is active, so any key change here is always a
+        // meaningful new-arrival event, not a fade-to-Tier-2 transition
+        // (that's handled by resetting needed_t1_flash_key to "" wherever
+        // Tier 1 is NOT active, below and in Tier 2/3, so the next real
+        // return to Tier 1 is correctly treated as new).
+        {
+            char new_key[64];
+            snprintf(new_key, sizeof(new_key), "%s|%s", t.last_spot.callsign, t.last_spot.received_at);
+            if (needed_t1_flash_initialized && strcmp(new_key, needed_t1_flash_key) != 0) {
+                trigger_flash(needed_t1_flash, nw.t1_spotted_shadow, t1_cs_color,
+                              nw.t1_spotted_callsign, t1_cs_color);
+            }
+            strncpy(needed_t1_flash_key, new_key, sizeof(needed_t1_flash_key) - 1);
+            needed_t1_flash_key[sizeof(needed_t1_flash_key) - 1] = '\0';
+            needed_t1_flash_initialized = true;
+        }
+
         char beam_buf[32];
         format_beam_suffix(t.last_spot, beam_buf, sizeof(beam_buf));
         lv_label_set_text(nw.t1_spotted_beam, beam_buf);
@@ -957,6 +1075,10 @@ static void update_overview_needed(const NeededData &data)
         lv_obj_add_flag(nw.t1_group, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(nw.t2_group, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(nw.t3_group, LV_OBJ_FLAG_HIDDEN);
+        // Tier 1 not active -- reset so the next real return to Tier 1 is
+        // correctly treated as a new arrival, not a repeat. See the flash
+        // detection comment in the Tier 1 branch above.
+        needed_t1_flash_key[0] = '\0';
 
         const NeededEntry &t = data.entries[seen_idx];
         lv_label_set_text(nw.t2_entity, t.entity);
@@ -991,6 +1113,8 @@ static void update_overview_needed(const NeededData &data)
     lv_obj_add_flag(nw.t1_group, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(nw.t2_group, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(nw.t3_group, LV_OBJ_FLAG_HIDDEN);
+    // Tier 1 not active -- see reset comment in the Tier 2 branch above.
+    needed_t1_flash_key[0] = '\0';
 
     if (data.count == 0) {
         // Added 2026-09-08: a genuinely empty curated list is a different
@@ -2394,6 +2518,7 @@ void loop()
     update_wifi_glyph();
     update_config_wifi();
     advance_ticker_if_needed();
+    update_flash_states();
     lvgl_port_unlock();
 
     delay(200);
