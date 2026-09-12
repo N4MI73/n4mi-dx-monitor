@@ -2320,6 +2320,30 @@ static void make_target_row(lv_obj_t *container, int index, const NeededEntry &t
     lv_obj_set_style_text_color(type_lbl, is_slot ? COLOR_BADGE_BLUE_TX : COLOR_ACCENT_AMBER, 0);
     lv_obj_center(type_lbl);
 
+    // 2026-09-12: pin/favorite badge -- roster-only, independent of live/seen
+    // state (a pin is about curation priority, not activity). Neutral badge
+    // colors deliberately, distinct from ENTITY/SLOT's amber/blue and from
+    // the live-status dot's green, so it can't be mistaken for either.
+    // Star glyph considered and deferred -- not yet confirmed safe against
+    // this embedded font's Unicode coverage (same class of gotcha already
+    // hit once for curly quotes); a text badge carries zero glyph risk.
+    if (t.pinned) {
+        lv_obj_t *pin_badge = lv_obj_create(card);
+        lv_obj_remove_style_all(pin_badge);
+        lv_obj_set_size(pin_badge, 66, 20);
+        lv_obj_set_style_radius(pin_badge, 5, 0);
+        lv_obj_set_style_border_width(pin_badge, 1, 0);
+        lv_obj_set_style_bg_color(pin_badge, COLOR_BADGE_BG, 0);
+        lv_obj_set_style_bg_opa(pin_badge, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(pin_badge, COLOR_BADGE_TEXT, 0);
+        lv_obj_align(pin_badge, LV_ALIGN_TOP_RIGHT, -20, 10);
+        lv_obj_t *pin_lbl = lv_label_create(pin_badge);
+        lv_label_set_text(pin_lbl, "PINNED");
+        lv_obj_set_style_text_font(pin_lbl, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(pin_lbl, COLOR_BADGE_TEXT, 0);
+        lv_obj_center(pin_lbl);
+    }
+
     lv_color_t text_primary = live ? COLOR_TEXT_PRIMARY : COLOR_TEXT_SECOND;
     lv_obj_t *entity_lbl = lv_label_create(card);
     lv_label_set_text(entity_lbl, t.entity);

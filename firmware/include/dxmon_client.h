@@ -125,6 +125,10 @@ struct NeededEntry {
     char entity[48];
     char band[24];          // slot kind only; may hold multiple values, e.g. "17M, 15M"
     char mode[16];          // slot kind only; may be empty
+    // Added 2026-09-12: pin/favorite -- see the series brief/Joplin note for the
+    // full sort-priority design. Roster-only display (a small "PINNED" badge);
+    // Overview's own featured-entry selection is completely unaffected by this.
+    bool pinned;
     SpotInfo last_spot;
     SpotInfo last_seen;
 };

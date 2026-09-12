@@ -183,6 +183,8 @@ bool dxmon_fetch_needed(NeededData &out)
         copy_field(t.entity, sizeof(t.entity), item["entity"]);
         copy_field(t.band, sizeof(t.band), item["band"]);
         copy_field(t.mode, sizeof(t.mode), item["mode"]);
+        // 2026-09-12: pin/favorite -- see NeededEntry's own comment.
+        t.pinned = item["pinned"] | false;
 
         parse_spot_info(t.last_spot, item["last_spot"]);
         parse_spot_info(t.last_seen, item["last_seen"]);
