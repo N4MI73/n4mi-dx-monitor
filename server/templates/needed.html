@@ -18,9 +18,9 @@
       <div class="card-top">
         <div>
           {% if w.band or w.mode %}
-            <span class="badge upcoming" style="margin-right: 0.5rem;">Slot</span>
+            <span class="badge" style="margin-right: 0.5rem;">Slot</span>
           {% else %}
-            <span class="badge" style="margin-right: 0.5rem;">Entity</span>
+            <span class="badge upcoming" style="margin-right: 0.5rem;">Entity</span>
           {% endif %}
           {% if w.days_old is not none and w.days_old >= 30 %}
             <span class="badge stale" style="margin-right: 0.5rem;" title="Curated {{ w.days_old }} days ago -- worth a review">{{ w.days_old }}d old</span>
