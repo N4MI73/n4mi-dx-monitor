@@ -2,6 +2,8 @@
 
 **"Is a DX station I care about active right now, and where should I listen?"**
 
+![Overview screen on DXMon v1.0. More pictures of other screens coming soon!](images/dxmon_device.png)
+
 DXMon is a small, glanceable desk instrument for the ham shack. It watches for
 specific DXpeditions and DXCC entities you still need, and gives you an
 at-a-glance answer -- on a dedicated touchscreen device, and through a web
