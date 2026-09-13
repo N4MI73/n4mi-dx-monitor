@@ -1470,15 +1470,22 @@ static SetupWidgets stw;
 
 static bool setup_success_pending = false;
 static uint32_t setup_success_at_ms = 0;
-static bool setup_return_to_overview = false;
 
 static void setup_cancel_btn_cb(lv_event_t *e)
 {
+    // 2026-09-13: restart rather than gracefully unwind AP/portal state and
+    // return to Overview in-place -- real evidence from Dan's first hardware
+    // test showed the unresolved display-rendering glitch (see
+    // SCHEDULED_REBOOT_INTERVAL_MS's own comment) appearing right after a
+    // Setup exit, almost certainly because credential validation's ~15s full
+    // main-loop freeze is a far bigger disruption than anything that's
+    // triggered this glitch before. A restart is the same proven cure
+    // already relied on elsewhere for this exact glitch, and is genuinely
+    // simpler/more robust than carefully unwinding portal/Wi-Fi mode state
+    // by hand, not just a workaround.
     wifi_portal_stop();
-    setup_success_pending = false;
-    lv_scr_load(screens[0]);
-    update_wifi_glyph();
-    update_config_wifi();
+    delay(100); // let Serial/Wi-Fi teardown settle before cutting power to the peripheral
+    ESP.restart();
 }
 
 static lv_obj_t *make_screen_setup(void)
@@ -2832,17 +2839,17 @@ void loop()
         }
 
         if (setup_success_pending && millis() >= setup_success_at_ms) {
+            // 2026-09-13: restart rather than stop-the-portal-and-return-to-
+            // Overview-in-place -- see setup_cancel_btn_cb()'s own comment for
+            // the full reasoning (real evidence of the display glitch
+            // appearing right after this exact transition). No need for an
+            // explicit do_full_refresh() here either -- the restart's own
+            // normal boot sequence already does a live fetch before loop()
+            // ever runs, so a fetch here would just be immediately redundant.
             setup_success_pending = false;
             wifi_portal_stop();
-            // Force an immediate fetch on the newly-connected network, matching
-            // APRSMon's own success behavior, rather than waiting on the normal
-            // 60s cycle -- the whole point of just having set up Wi-Fi is to see
-            // live data right away.
-            if (WiFi.status() == WL_CONNECTED) {
-                do_full_refresh();
-            }
-            last_fetch_ms = millis();
-            setup_return_to_overview = true;
+            delay(100);
+            ESP.restart();
         }
     }
 
@@ -2851,10 +2858,12 @@ void loop()
     update_config_wifi();
     advance_ticker_if_needed();
     update_flash_states();
-    if (setup_return_to_overview) {
-        setup_return_to_overview = false;
-        lv_scr_load(screens[0]);
-    } else if (wifi_portal_is_active()) {
+    // 2026-09-13: setup_return_to_overview's own dead branch removed -- both
+    // Setup exits (success, Cancel) now restart the device instead of
+    // returning to Overview in-place, so this condition can no longer become
+    // true. Kept update_setup_screen_ui() itself, since it still needs to run
+    // for as long as Setup is actually on screen and active.
+    if (wifi_portal_is_active()) {
         update_setup_screen_ui();
     }
     lvgl_port_unlock();
