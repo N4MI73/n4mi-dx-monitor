@@ -127,6 +127,73 @@
     border-bottom: 1px solid var(--panel-alt);
     font-size: 0.9rem;
   }
+  /* 2026-09-13: drill-down screens (Category Activity Feed, Single-Target
+     Spot History) -- full-screen takeovers, no tab bar, matching the real
+     device exactly (confirmed against Dan's own device photos). */
+  .clickable { cursor: pointer; }
+  .drilldown-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 0.75rem;
+  }
+  .drilldown-back {
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0 0.6rem 0 0;
+    line-height: 1.3;
+  }
+  .drilldown-caption {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+  }
+  .drilldown-title {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--text);
+    margin-top: 0.1rem;
+  }
+  .drilldown-subtitle {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-top: 0.15rem;
+  }
+  .drilldown-live {
+    color: var(--accent-watched);
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .drilldown-beam {
+    color: var(--accent-active);
+    font-size: 0.85rem;
+    margin-top: 0.4rem;
+  }
+  .activity-row, .history-row {
+    padding: 0.6rem 0;
+    border-bottom: 1px solid var(--panel-alt);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .activity-row:last-child, .history-row:last-child { border-bottom: none; }
+  .history-callsign-entity {
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 0.95rem;
+    color: var(--accent-upcoming);
+    font-weight: 600;
+  }
+  .drilldown-footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.75rem;
+    margin-top: 1rem;
+  }
 </style>
 
 <script>
@@ -351,7 +418,7 @@ function renderWatchedRosterRow(e) {
     '</div>';
   }
 
-  return '<div class="device-row' + textClass + '" style="display: flex; justify-content: space-between; align-items: flex-start;">' +
+  return '<div class="device-row' + textClass + ' clickable" onclick="openHistoryCallsign(\'' + jsAttr(e.callsign) + '\')" style="display: flex; justify-content: space-between; align-items: flex-start;">' +
     '<div>' +
       '<span style="color: ' + dotColor + ';">&#9679;</span> ' +
       '<span class="device-callsign" style="font-size: 1.1rem;">' + escapeHtml(e.callsign) + '</span> ' +
@@ -420,11 +487,11 @@ function renderNeededPanel() {
 function renderOverview() {
   const neededCount = (neededData && neededData.needed) ? neededData.needed.length : 0;
   return '<div class="overview-split">' +
-    '<div class="overview-panel" style="border-left: 3px solid var(--accent-active);">' +
+    '<div class="overview-panel clickable" onclick="openActivityFeed(\'watched\')" style="border-left: 3px solid var(--accent-active);">' +
       '<div class="overview-panel-title" style="color: var(--accent-active);">Watched</div>' +
       renderOverviewWatchedPanel() +
     '</div>' +
-    '<div class="overview-panel" style="border-left: 3px solid var(--accent-upcoming);">' +
+    '<div class="overview-panel clickable" onclick="openActivityFeed(\'needed\')" style="border-left: 3px solid var(--accent-upcoming);">' +
       '<div style="display: flex; justify-content: space-between; align-items: baseline;">' +
         '<div class="overview-panel-title" style="color: var(--accent-upcoming); margin-bottom: 0;">Needed</div>' +
         '<span style="font-size: 0.7rem; color: var(--muted);">' + neededCount + ' TRACKED</span>' +
@@ -464,7 +531,7 @@ function renderNeededRow(n) {
     '</div>';
   }
 
-  return '<div class="device-row" style="display: flex; justify-content: space-between; align-items: flex-start;">' +
+  return '<div class="device-row clickable" onclick="openHistoryNeeded(\'' + jsAttr(n.id) + '\')" style="display: flex; justify-content: space-between; align-items: flex-start;">' +
     '<div>' +
       renderNeededKindBadge(n.kind) +
       '<span class="device-dxcc">' + escapeHtml(n.entity) + '</span>' +
@@ -517,6 +584,241 @@ function renderConfig() {
     '</div>';
 }
 
+// ---------------------------------------------------------------------------
+// Drill-down navigation -- 2026-09-13. Two full-screen-takeover screen types
+// on top of the existing four tabs, matching the locked design (approved
+// 2026-09-05, built and confirmed on real hardware 2026-09-06/08, never
+// wired into /preview until now). `currentView` is a simple parent-chain
+// "stack" -- {type:'tab'} is the resting state; each drill-down level stores
+// its own parent so goBackFromDrilldown() always returns to exactly where it
+// came from, whether that's a tab or a previous drill-down screen (e.g.
+// Activity Feed -> an individual spot -> History -> back -> Activity Feed
+// again, not all the way to Overview).
+let currentView = { type: 'tab' };
+
+// JS-string-literal escaping for values interpolated into onclick="..."
+// attributes (callsigns, needed ids) -- distinct from escapeHtml(), which
+// only handles HTML entity escaping for visible text. Needed since inline
+// onclick is this file's existing convention throughout (see switchTab).
+function jsAttr(s) {
+  return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+async function fetchJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
+
+function openActivityFeed(category) {
+  currentView = { type: 'activity', category: category, data: null, error: false, parent: currentView };
+  renderCurrentView();
+  fetchJson('/api/dxmon/activity/' + category).then(function(data) {
+    currentView.data = data;
+    renderCurrentView();
+  }).catch(function() {
+    currentView.error = true;
+    renderCurrentView();
+  });
+}
+
+function openHistoryCallsign(callsign) {
+  currentView = { type: 'history-callsign', callsign: callsign, data: null, error: false, parent: currentView };
+  renderCurrentView();
+  fetchJson('/api/dxmon/history/callsign/' + encodeURIComponent(callsign)).then(function(data) {
+    currentView.data = data;
+    renderCurrentView();
+  }).catch(function() {
+    currentView.error = true;
+    renderCurrentView();
+  });
+}
+
+function openHistoryNeeded(neededId) {
+  currentView = { type: 'history-needed', neededId: neededId, data: null, error: false, parent: currentView };
+  renderCurrentView();
+  fetchJson('/api/dxmon/history/needed/' + encodeURIComponent(neededId)).then(function(data) {
+    currentView.data = data;
+    renderCurrentView();
+  }).catch(function() {
+    currentView.error = true;
+    renderCurrentView();
+  });
+}
+
+function goBackFromDrilldown() {
+  currentView = currentView.parent || { type: 'tab' };
+  renderCurrentView();
+}
+
+// Shared header for both drill-down screen types -- back arrow, small
+// colored caption, big title, optional subtitle (entity-level history only),
+// LIVE indicator, optional right-side content (callsign-level history's
+// top-level beam readout). Matches the real device's header layout exactly
+// across all four real screenshots checked (KH0N, AH4R, Congo, KH8WW).
+function renderDrilldownHeader(captionText, captionColor, titleText, subtitleHtml, rightExtraHtml) {
+  return '<div class="drilldown-header">' +
+    '<div style="display: flex;">' +
+      '<button class="drilldown-back" onclick="goBackFromDrilldown()">&#8249;</button>' +
+      '<div>' +
+        '<div class="drilldown-caption" style="color: ' + captionColor + ';">' + escapeHtml(captionText) + '</div>' +
+        '<div class="drilldown-title">' + escapeHtml(titleText) + '</div>' +
+        (subtitleHtml || '') +
+      '</div>' +
+    '</div>' +
+    '<div style="text-align: right;">' +
+      '<div class="drilldown-live">LIVE</div>' +
+      (rightExtraHtml || '') +
+    '</div>' +
+  '</div>';
+}
+
+// Category Activity Feed row -- two real variants confirmed from device
+// photos: Watched (callsign + band/mode/beam line only, no entity/badge
+// since a Watched entry already is one known callsign) and Needed
+// (ENTITY/SLOT badge + entity name on top, callsign on its own line below).
+// Both variants open the SAME callsign-level history on tap -- "tapping an
+// individual spot" always means callsign-level, regardless of category.
+function renderActivityRow(spot, category) {
+  const dateText = formatShortDateTime(spot.received_at);
+  const bandMode = ((spot.band || '').toUpperCase() + ' ' + (spot.mode || '').toUpperCase()).trim();
+  const beamText = formatBeamSuffix(spot.beam);
+  const detailLine = beamText ? (bandMode + ' -- ' + beamText) : bandMode;
+  const onclickAttr = "openHistoryCallsign('" + jsAttr(spot.callsign) + "')";
+
+  const topLine = category === 'needed'
+    ? '<div>' + renderNeededKindBadge(spot.kind) + '<span class="device-dxcc">' + escapeHtml(spot.entity) + '</span></div>' +
+      '<span class="device-callsign" style="font-size: 1rem;">' + escapeHtml(spot.callsign) + '</span>'
+    : '<span class="device-callsign" style="font-size: 1rem;">' + escapeHtml(spot.callsign) + '</span>';
+
+  return '<div class="activity-row clickable" onclick="' + onclickAttr + '">' +
+    '<div>' +
+      topLine +
+      '<div class="device-stat" style="margin-top: 0.2rem;">' + escapeHtml(detailLine) + '</div>' +
+    '</div>' +
+    '<div class="device-stat">' + dateText + '</div>' +
+  '</div>';
+}
+
+function renderActivityFeedScreen(view) {
+  const categoryLabel = view.category === 'watched' ? 'WATCHED' : 'NEEDED';
+  const captionColor = view.category === 'watched' ? 'var(--accent-active)' : 'var(--accent-upcoming)';
+  const header = renderDrilldownHeader(categoryLabel, captionColor, 'Recent Activity', '', '');
+  if (view.error) return header + '<div class="preview-empty">Failed to load activity.</div>';
+  if (!view.data) return header + '<div class="preview-loading">Loading...</div>';
+  const spots = view.data.spots || [];
+  if (!spots.length) return header + '<div class="preview-empty">No recent activity.</div>';
+  return header + spots.map(function(s) { return renderActivityRow(s, view.category); }).join('');
+}
+
+// Single-Target Spot History, callsign-level row -- three-column layout
+// (mode badge + frequency, band, date/time) confirmed from device photos
+// (KH0N, AH4R, KH8WW). No callsign shown per-row since the whole screen is
+// already scoped to one callsign.
+function renderHistoryCallsignRow(spot) {
+  return '<div class="history-row">' +
+    '<div style="display: flex; align-items: center; gap: 0.6rem;">' +
+      '<span class="device-badge slot">' + escapeHtml((spot.mode || '').toUpperCase()) + '</span>' +
+      '<span class="device-stat" style="color: var(--text);">' + escapeHtml(spot.frequency) + ' MHz</span>' +
+    '</div>' +
+    '<div class="device-stat">' + escapeHtml((spot.band || '').toUpperCase()) + '</div>' +
+    '<div class="device-stat">' + formatShortDateTime(spot.received_at) + '</div>' +
+  '</div>';
+}
+
+function renderHistoryCallsignScreen(view) {
+  const beamHtml = (view.data && view.data.beam)
+    ? '<div class="drilldown-beam">' + formatBeamSuffix(view.data.beam) + '</div>'
+    : '';
+  const titleText = (view.data && view.data.callsign) || view.callsign;
+  const header = renderDrilldownHeader('CALLSIGN -- LAST 10 SPOTS', 'var(--accent-active)', titleText, '', beamHtml);
+  if (view.error) return header + '<div class="preview-empty">Failed to load history.</div>';
+  if (!view.data) return header + '<div class="preview-loading">Loading...</div>';
+  const spots = view.data.spots || [];
+  if (!spots.length) return header + '<div class="preview-empty">No spots recorded yet.</div>';
+  return header + spots.map(renderHistoryCallsignRow).join('') +
+    '<div class="drilldown-footer">Showing ' + spots.length + ' of last 10 -- older spots not available</div>';
+}
+
+// Single-Target Spot History, entity-level row -- same three-column top line
+// as callsign-level, plus the callsign itself (amber, matching Needed's own
+// spotted-callsign color convention elsewhere) and its own per-spot beam on
+// a second line, since an entity/slot can be worked by several different
+// callsigns over time (confirmed real -- Singapore has both 9V1XX and
+// 9V1SH). Confirmed from the Congo device photo.
+function renderHistoryNeededRow(spot) {
+  return '<div class="history-row" style="flex-direction: column; align-items: stretch;">' +
+    '<div style="display: flex; justify-content: space-between;">' +
+      '<div style="display: flex; align-items: center; gap: 0.6rem;">' +
+        '<span class="device-badge slot">' + escapeHtml((spot.mode || '').toUpperCase()) + '</span>' +
+        '<span class="device-stat" style="color: var(--text);">' + escapeHtml(spot.frequency) + ' MHz</span>' +
+      '</div>' +
+      '<div class="device-stat">' + escapeHtml((spot.band || '').toUpperCase()) + '</div>' +
+      '<div class="device-stat">' + formatShortDateTime(spot.received_at) + '</div>' +
+    '</div>' +
+    '<div style="margin-top: 0.25rem;">' +
+      '<span class="history-callsign-entity">' + escapeHtml(spot.callsign) + '</span> ' +
+      '<span class="device-stat">' + formatBeamSuffix(spot.beam) + '</span>' +
+    '</div>' +
+  '</div>';
+}
+
+function renderHistoryNeededScreen(view) {
+  if (!view.data) {
+    return renderDrilldownHeader('NEEDED -- SLOT HISTORY', 'var(--accent-active)', 'Loading...', '', '') +
+      '<div class="preview-loading">Loading...</div>';
+  }
+  if (view.error) {
+    return renderDrilldownHeader('NEEDED -- SLOT HISTORY', 'var(--accent-active)', 'Error', '', '') +
+      '<div class="preview-empty">Failed to load history.</div>';
+  }
+  const data = view.data;
+  // Real, honest state: the entry may have been removed from Needed since
+  // this screen was opened -- the backend returns entity: null rather than
+  // an HTTP error for this case (see api_dxmon_history_needed's own
+  // comment), so this is expected, not a failure.
+  if (data.entity === null || data.entity === undefined) {
+    return renderDrilldownHeader('NEEDED -- SLOT HISTORY', 'var(--accent-active)', 'No longer tracked', '', '') +
+      '<div class="preview-empty">This entry has been removed from Needed.</div>';
+  }
+  const isSlot = !!((data.band || '').trim() || (data.mode || '').trim());
+  // Real assumption, not yet confirmed against a real slot-kind history
+  // screenshot (only the Congo/entity-kind screen was photographed this
+  // session) -- worth a quick real-device check next time a SLOT entry's
+  // history screen is opened, to confirm this exact wording/format.
+  const subtitleText = isSlot
+    ? ((data.band || '') + ' ' + (data.mode || '')).trim().toUpperCase()
+    : 'WHOLE ENTITY -- ANY BAND/MODE';
+  const subtitleHtml = '<div class="drilldown-subtitle">' + escapeHtml(subtitleText) + '</div>';
+  const header = renderDrilldownHeader('NEEDED -- SLOT HISTORY', 'var(--accent-active)', data.entity, subtitleHtml, '');
+  const spots = data.spots || [];
+  if (!spots.length) return header + '<div class="preview-empty">No spots recorded yet.</div>';
+  return header + spots.map(renderHistoryNeededRow).join('') +
+    '<div class="drilldown-footer">Showing ' + spots.length + ' of last 10 -- older spots not available</div>';
+}
+
+// Dispatches to either the normal tab content (tab bar visible) or the
+// current drill-down screen (tab bar hidden, full-screen takeover) --
+// matches the real device's navigation model exactly.
+function renderCurrentView() {
+  const tabbar = document.getElementById('device-tabbar');
+  if (currentView.type === 'tab') {
+    tabbar.style.display = '';
+    renderActiveTab();
+    return;
+  }
+  tabbar.style.display = 'none';
+  stopNeededTicker();
+  const content = document.getElementById('device-content');
+  if (currentView.type === 'activity') {
+    content.innerHTML = renderActivityFeedScreen(currentView);
+  } else if (currentView.type === 'history-callsign') {
+    content.innerHTML = renderHistoryCallsignScreen(currentView);
+  } else if (currentView.type === 'history-needed') {
+    content.innerHTML = renderHistoryNeededScreen(currentView);
+  }
+}
+
 function renderActiveTab() {
   const content = document.getElementById('device-content');
   stopNeededTicker();
@@ -538,6 +840,11 @@ function renderActiveTab() {
 
 function switchTab(tab) {
   activeTab = tab;
+  // Switching tabs always exits any active drill-down -- matches the real
+  // device, where the tab bar itself is hidden while drilled in, so this
+  // mainly guards against stale state rather than a reachable real path.
+  currentView = { type: 'tab' };
+  document.getElementById('device-tabbar').style.display = '';
   document.querySelectorAll('.tab-btn').forEach(function(btn) {
     btn.classList.toggle('active', btn.dataset.tab === tab);
   });
@@ -559,7 +866,10 @@ async function loadData() {
   } catch (e) {
     document.getElementById('last-updated').textContent = 'Failed to load data';
   }
-  renderActiveTab();
+  // Respects drill-down state -- refreshing the underlying tab data while a
+  // drill-down screen is open shouldn't silently pop back to a tab or leave
+  // the tab bar hidden with tab content rendered behind it.
+  renderCurrentView();
 }
 
 loadData();
