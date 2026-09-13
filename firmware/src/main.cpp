@@ -22,6 +22,7 @@
 #include "config.h"
 #include "wifi_client.h"
 #include "dxmon_client.h"
+#include "wifi_portal.h"
 
 using namespace esp_panel::drivers;
 using namespace esp_panel::board;
@@ -1293,6 +1294,18 @@ static lv_obj_t *make_config_row(lv_obj_t *parent, lv_obj_t **out_dot, const cha
     return val;
 }
 
+// 2026-09-13: Wi-Fi Setup screen, created once at boot alongside the other
+// extra (non-tab-bar) screens (activity_feed_screen, history_screen -- see
+// their own declarations elsewhere in this file). Declared here, ahead of
+// make_screen_config()'s own button callback below, which needs it.
+static lv_obj_t *setup_screen = NULL;
+
+static void setup_btn_cb(lv_event_t *e)
+{
+    lv_scr_load(setup_screen);
+    wifi_portal_start();
+}
+
 static lv_obj_t *make_screen_config(void)
 {
     lv_obj_t *scr = make_screen();
@@ -1334,24 +1347,167 @@ static lv_obj_t *make_screen_config(void)
     lv_obj_set_style_text_color(refresh_lbl, COLOR_BADGE_BLUE_TX, 0);
     lv_obj_center(refresh_lbl);
 
-    // Wi-Fi Setup -- visible, deliberately disabled placeholder (see comment
-    // above the struct). Muted styling distinguishes it from the real button.
-    lv_obj_t *setup_btn = lv_obj_create(scr);
-    lv_obj_remove_style_all(setup_btn);
+    // Wi-Fi Setup -- real and functional (2026-09-13). Enters the full-
+    // screen Setup takeover and kicks off the portal's async network scan.
+    // wifi_portal_start() only starts an async scan (non-blocking, returns
+    // immediately), so calling it directly from this touch callback is
+    // safe -- unlike Force Refresh, there's no HTTP round-trip here that
+    // would need the flag-deferral trick.
+    lv_obj_t *setup_btn = lv_btn_create(scr);
     lv_obj_set_size(setup_btn, 368, 66);
     lv_obj_set_pos(setup_btn, 408, 330);
     lv_obj_set_style_bg_color(setup_btn, COLOR_PANEL_BG, 0);
-    lv_obj_set_style_bg_opa(setup_btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(setup_btn, COLOR_PANEL_BORDER, 0);
+    lv_obj_set_style_border_color(setup_btn, COLOR_ACCENT_AMBER, 0);
     lv_obj_set_style_border_width(setup_btn, 2, 0);
     lv_obj_set_style_radius(setup_btn, 10, 0);
+    lv_obj_add_event_cb(setup_btn, setup_btn_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *setup_lbl = lv_label_create(setup_btn);
-    lv_label_set_text(setup_lbl, "Wi-Fi Setup (coming soon)");
-    lv_obj_set_style_text_font(setup_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(setup_lbl, COLOR_TEXT_MUTED, 0);
+    lv_label_set_text(setup_lbl, "Wi-Fi Setup");
+    lv_obj_set_style_text_font(setup_lbl, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(setup_lbl, COLOR_ACCENT_AMBER, 0);
     lv_obj_center(setup_lbl);
 
     return scr;
+}
+
+// ---------------------------------------------------------------------------
+// Wi-Fi Setup screen -- 2026-09-13. Full-screen takeover, no tab bar, same
+// navigational pattern as the Category Activity Feed / Single-Target
+// History drill-downs -- reached only from Config's own Wi-Fi Setup button.
+//
+// Real design decisions confirmed with Dan before any of this was written:
+// - The device LOCKS to this screen until success or Cancel -- deliberately
+//   simpler than APRSMon's background-operation model, since Wi-Fi Setup is
+//   expected to be rare and DXMon's tab bar being always-visible elsewhere
+//   would make "keep it running in the background" real, non-trivial work
+//   for a feature that doesn't need it.
+// - The network-match requirement ("connect to the same network as your
+//   DXMon server") is shown here AND on the phone's own form page (see
+//   wifi_portal.cpp) -- the phone page matters more, since that's what's
+//   actually being looked at when a network gets picked, but it's shown
+//   here too since this screen is visible the whole time.
+struct SetupWidgets {
+    lv_obj_t *ap_name_value;
+    lv_obj_t *ap_ip_value;
+    lv_obj_t *status_dot;
+    lv_obj_t *status_lbl;
+    lv_obj_t *cancel_btn;
+};
+static SetupWidgets stw;
+
+static bool setup_success_pending = false;
+static uint32_t setup_success_at_ms = 0;
+static bool setup_return_to_overview = false;
+
+static void setup_cancel_btn_cb(lv_event_t *e)
+{
+    wifi_portal_stop();
+    setup_success_pending = false;
+    lv_scr_load(screens[0]);
+    update_wifi_glyph();
+    update_config_wifi();
+}
+
+static lv_obj_t *make_screen_setup(void)
+{
+    lv_obj_t *scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr, COLOR_BG, 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Same create_header() every other screen uses (Config, Overview, etc.)
+    // for a consistent look -- occupies y=0-56, so all content below starts
+    // at y=72, matching Config's own panel start position exactly.
+    create_header(scr, "WI-FI SETUP", "");
+
+    lv_obj_t *reminder = lv_label_create(scr);
+    lv_label_set_long_mode(reminder, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(reminder, 760);
+    lv_obj_set_pos(reminder, 20, 72);
+    lv_label_set_text(reminder,
+        "Connect to the same Wi-Fi network your DXMon server (NAS) is running "
+        "on -- otherwise DXMon won't be able to reach it once connected.");
+    lv_obj_set_style_text_font(reminder, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(reminder, COLOR_ACCENT_AMBER, 0);
+
+    make_label(scr, "1. CONNECT YOUR PHONE TO:", &lv_font_montserrat_14, COLOR_TEXT_SECOND, 20, 130);
+    make_label(scr, WIFI_SETUP_AP_NAME, &lv_font_montserrat_16, COLOR_TEXT_PRIMARY, 20, 152);
+
+    make_label(scr, "2. IF A SIGN-IN PAGE DOESN'T OPEN AUTOMATICALLY, BROWSE TO:",
+               &lv_font_montserrat_14, COLOR_TEXT_SECOND, 20, 192);
+    stw.ap_ip_value = make_label(scr, "--", &lv_font_montserrat_16, COLOR_TEXT_PRIMARY, 20, 214);
+
+    make_label(scr, "STATUS", &lv_font_montserrat_14, COLOR_TEXT_SECOND, 20, 270);
+    stw.status_dot = lv_obj_create(scr);
+    lv_obj_remove_style_all(stw.status_dot);
+    lv_obj_set_size(stw.status_dot, 12, 12);
+    lv_obj_set_style_radius(stw.status_dot, 6, 0);
+    lv_obj_set_style_bg_opa(stw.status_dot, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(stw.status_dot, COLOR_DOT_GRAY, 0);
+    lv_obj_set_pos(stw.status_dot, 20, 296);
+    stw.status_lbl = make_label(scr, "Starting scan...", &lv_font_montserrat_16, COLOR_TEXT_PRIMARY, 40, 292);
+
+    stw.cancel_btn = lv_btn_create(scr);
+    lv_obj_set_size(stw.cancel_btn, 200, 56);
+    lv_obj_set_pos(stw.cancel_btn, 20, 400);
+    lv_obj_set_style_bg_color(stw.cancel_btn, COLOR_PANEL_BG, 0);
+    lv_obj_set_style_border_color(stw.cancel_btn, COLOR_STATUS_RED, 0);
+    lv_obj_set_style_border_width(stw.cancel_btn, 2, 0);
+    lv_obj_set_style_radius(stw.cancel_btn, 10, 0);
+    lv_obj_add_event_cb(stw.cancel_btn, setup_cancel_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *cancel_lbl = lv_label_create(stw.cancel_btn);
+    lv_label_set_text(cancel_lbl, "Cancel");
+    lv_obj_set_style_text_font(cancel_lbl, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(cancel_lbl, COLOR_STATUS_RED, 0);
+    lv_obj_center(cancel_lbl);
+
+    return scr;
+}
+
+/** Refreshes the Setup screen's own dynamic labels (status, AP IP) --
+ * called every loop() pass while the portal is active, from inside the
+ * LVGL lock. Does no networking of its own; see the loop()-level caller
+ * for the network I/O (wifi_portal_process(), do_full_refresh()) that
+ * deliberately happens OUTSIDE the lock, matching this project's own
+ * established discipline against holding the render lock during I/O. */
+static void update_setup_screen_ui(void)
+{
+    char ip_buf[24];
+    IPAddress ip = wifi_portal_get_ap_ip();
+    if (ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] == 0) {
+        lv_label_set_text(stw.ap_ip_value, "--");
+    } else {
+        snprintf(ip_buf, sizeof(ip_buf), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+        lv_label_set_text(stw.ap_ip_value, ip_buf);
+    }
+
+    lv_color_t dot_color;
+    const char *text;
+    switch (wifi_portal_get_status()) {
+        case WifiPortalStatus::SCANNING:
+            dot_color = COLOR_ACCENT_AMBER;
+            text = "Scanning for networks...";
+            break;
+        case WifiPortalStatus::WAITING:
+            dot_color = COLOR_STATUS_GREEN;
+            text = (wifi_portal_client_count() > 0) ? "Phone connected -- choose a network" : "Waiting for connection...";
+            break;
+        case WifiPortalStatus::CONNECTING:
+            dot_color = COLOR_ACCENT_AMBER;
+            text = "Connecting...";
+            break;
+        case WifiPortalStatus::CONNECTED:
+            dot_color = COLOR_STATUS_GREEN;
+            text = "Connected!";
+            break;
+        case WifiPortalStatus::FAILED:
+        default:
+            dot_color = COLOR_STATUS_RED;
+            text = "Failed -- retry from your phone";
+            break;
+    }
+    lv_obj_set_style_bg_color(stw.status_dot, dot_color, 0);
+    lv_label_set_text(stw.status_lbl, text);
 }
 
 /** Updates Wi-Fi row from real-time WiFi.status()/localIP() -- no fetch needed. */
@@ -2599,6 +2755,7 @@ void setup()
     screens[3] = make_screen_config();
     activity_feed_screen = make_screen_activity_feed();
     history_screen = make_screen_single_target_history();
+    setup_screen = make_screen_setup();
 
     for (int i = 0; i < 4; i++) {
         create_tab_bar(screens[i], i);
@@ -2611,7 +2768,7 @@ void setup()
     lvgl_port_unlock();
 
     Serial.println("Connecting Wi-Fi");
-    bool wifi_ok = wifi_connect(WIFI_CONNECT_TIMEOUT_MS);
+    bool wifi_ok = wifi_client_connect(WIFI_CONNECT_TIMEOUT_MS);
 
     lvgl_port_lock(-1);
     update_wifi_glyph();
@@ -2638,7 +2795,10 @@ void loop()
     // first, before any refresh/redraw work, so it never fires mid-fetch or mid-render.
     // Logged clearly as a deliberate restart so it's never mistaken for a crash when
     // reviewing Serial output later.
-    if (millis() >= SCHEDULED_REBOOT_INTERVAL_MS) {
+    // 2026-09-13: suppressed while Wi-Fi Setup is active -- Setup is rare and usually
+    // quick, but an interval reboot mid-scan, mid-AP-broadcast, or worse, mid-credential-
+    // submission would be a genuinely bad interruption, not just a cosmetic one.
+    if (millis() >= SCHEDULED_REBOOT_INTERVAL_MS && !wifi_portal_is_active()) {
         Serial.printf("Scheduled reboot -- uptime %lu ms reached %lu ms interval, restarting\n",
                       (unsigned long)millis(), (unsigned long)SCHEDULED_REBOOT_INTERVAL_MS);
         delay(100);  // let the Serial line actually flush before the restart cuts power to the peripheral
@@ -2657,11 +2817,45 @@ void loop()
         last_fetch_ms = millis();
     }
 
+    // 2026-09-13: Wi-Fi Setup portal networking -- deliberately outside the LVGL
+    // lock, matching the refresh-cycle logic just above. wifi_portal_process()
+    // itself never blocks except during the one documented CONNECTING window
+    // (see wifi_portal.h), which is an accepted, deliberate exception to this
+    // project's usual no-blocking-in-loop() discipline, not an oversight.
+    if (wifi_portal_is_active()) {
+        wifi_portal_process();
+
+        if (wifi_portal_is_complete() && !setup_success_pending) {
+            setup_success_pending = true;
+            setup_success_at_ms = millis() + WIFI_SETUP_SUCCESS_GRACE_MS;
+        }
+
+        if (setup_success_pending && millis() >= setup_success_at_ms) {
+            setup_success_pending = false;
+            wifi_portal_stop();
+            // Force an immediate fetch on the newly-connected network, matching
+            // APRSMon's own success behavior, rather than waiting on the normal
+            // 60s cycle -- the whole point of just having set up Wi-Fi is to see
+            // live data right away.
+            if (WiFi.status() == WL_CONNECTED) {
+                do_full_refresh();
+            }
+            last_fetch_ms = millis();
+            setup_return_to_overview = true;
+        }
+    }
+
     lvgl_port_lock(-1);
     update_wifi_glyph();
     update_config_wifi();
     advance_ticker_if_needed();
     update_flash_states();
+    if (setup_return_to_overview) {
+        setup_return_to_overview = false;
+        lv_scr_load(screens[0]);
+    } else if (wifi_portal_is_active()) {
+        update_setup_screen_ui();
+    }
     lvgl_port_unlock();
 
     delay(200);

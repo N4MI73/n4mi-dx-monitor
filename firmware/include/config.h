@@ -16,6 +16,15 @@
 #define DXMON_HISTORY_NEEDED_PATH    "/api/dxmon/history/needed/"
 
 #define WIFI_CONNECT_TIMEOUT_MS  15000
+// Added 2026-09-13 for the real captive-portal Wi-Fi Setup screen, ported from
+// PropMon (2026-07-16/17) / APRSMon (2026-08-02). WIFI_SETUP_AP_NAME is the open
+// network's own SSID, shown on-device and used as the AP name a phone connects to.
+// WIFI_SETUP_SUCCESS_GRACE_MS is how long the AP/DNS/web server stay up after a
+// successful connect before being torn down, so the phone's browser has time to
+// fully receive the "Connected!" confirmation page first -- matches the same value
+// both PropMon and APRSMon settled on.
+#define WIFI_SETUP_AP_NAME  "DXMon-Setup"
+#define WIFI_SETUP_SUCCESS_GRACE_MS  2000
 #define LIVE_FETCH_INTERVAL_MS   60000
 // Mitigation for the still-unresolved display-rendering glitch (2026-09-04) -- root
 // cause not found despite ruling out available heap and pixel-clock bandwidth as
