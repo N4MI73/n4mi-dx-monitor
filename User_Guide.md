@@ -224,6 +224,30 @@ one entry didn't have a usable heading calculated for it.
   entity-level trigger, to curate and set up the alert in one pass instead
   of two separate trips.
 
+#### Examples from a real setup
+
+The three trigger shapes in practice, all with a **Spotter Continent**
+filter (North America) added -- this keeps busy callsigns and entities well
+under HamAlert's own daily spot-volume limit, per the same real fix
+already applied elsewhere in this project's own trigger history.
+
+**Watched callsign trigger** -- callsign, band, and mode conditions, one
+per DXpedition you're following:
+
+![HamAlert trigger example for a Watched callsign](images/hamalert_watched_trigger.png)
+
+**Needed whole-entity trigger** -- DXCC condition only, no band/mode
+restriction, since these are ENTITY-kind Needed targets (any band, any
+mode counts):
+
+![HamAlert trigger example for a Needed whole entity](images/hamalert_needed_entity_trigger.png)
+
+**Needed band-slot trigger** -- DXCC, band, and mode conditions together,
+matching exactly the bands/modes checked on DXMon's own Needed curation
+page for that SLOT-kind entry:
+
+![HamAlert trigger example for a Needed band/mode slot](images/hamalert_needed_bands_trigger.png)
+
 ### Keeping your Needed list useful
 
 - **Pin sparingly.** Pinning is for entities you genuinely want to see
