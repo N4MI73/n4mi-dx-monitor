@@ -1370,6 +1370,79 @@ static lv_obj_t *make_screen_config(void)
     return scr;
 }
 
+
+/** Updates Wi-Fi row from real-time WiFi.status()/localIP() -- no fetch needed. */
+static void update_config_wifi(void)
+{
+    if (WiFi.status() == WL_CONNECTED) {
+        char buf[48];
+        IPAddress ip = WiFi.localIP();
+        snprintf(buf, sizeof(buf), "Connected %s %d.%d.%d.%d", "\xE2\x80\xA2", ip[0], ip[1], ip[2], ip[3]);
+        lv_label_set_text(cfgw.wifi_lbl, buf);
+        lv_obj_set_style_text_color(cfgw.wifi_lbl, COLOR_TEXT_PRIMARY, 0);
+        lv_obj_set_style_bg_color(cfgw.wifi_dot, COLOR_STATUS_GREEN, 0);
+    } else {
+        lv_label_set_text(cfgw.wifi_lbl, "Disconnected");
+        lv_obj_set_style_text_color(cfgw.wifi_lbl, COLOR_TEXT_MUTED, 0);
+        lv_obj_set_style_bg_color(cfgw.wifi_dot, COLOR_DOT_GRAY, 0);
+    }
+}
+
+static void update_config_preview_status(const PreviewStatus &ps)
+{
+    char adxo_buf[48];
+    char when_buf[24];
+    format_short_datetime(ps.adxo_updated, when_buf, sizeof(when_buf));
+    snprintf(adxo_buf, sizeof(adxo_buf), "OK %s %s", "\xE2\x80\xA2", when_buf);
+    lv_label_set_text(cfgw.adxo_lbl, adxo_buf);
+    lv_obj_set_style_text_color(cfgw.adxo_lbl, COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_bg_color(cfgw.adxo_dot, COLOR_STATUS_GREEN, 0);
+
+    // HamAlert -- no last-spot timestamp at this endpoint (see struct comment
+    // in dxmon_client.h); shows connection state only.
+    if (!ps.hamalert_enabled) {
+        lv_label_set_text(cfgw.hamalert_lbl, "Disabled");
+        lv_obj_set_style_text_color(cfgw.hamalert_lbl, COLOR_TEXT_MUTED, 0);
+        lv_obj_set_style_bg_color(cfgw.hamalert_dot, COLOR_DOT_GRAY, 0);
+    } else if (ps.hamalert_connected && ps.hamalert_logged_in) {
+        lv_label_set_text(cfgw.hamalert_lbl, "Connected");
+        lv_obj_set_style_text_color(cfgw.hamalert_lbl, COLOR_TEXT_PRIMARY, 0);
+        lv_obj_set_style_bg_color(cfgw.hamalert_dot, COLOR_STATUS_GREEN, 0);
+    } else {
+        lv_label_set_text(cfgw.hamalert_lbl, "Disconnected");
+        lv_obj_set_style_text_color(cfgw.hamalert_lbl, COLOR_TEXT_MUTED, 0);
+        lv_obj_set_style_bg_color(cfgw.hamalert_dot, COLOR_DOT_GRAY, 0);
+    }
+
+    char watch_buf[24];
+    snprintf(watch_buf, sizeof(watch_buf), "%d watched", ps.watched_count);
+    lv_label_set_text(cfgw.watchlist_lbl, watch_buf);
+}
+
+// ---------------------------------------------------------------------------
+// Honest placeholders -- Watched/Needed tabs not yet built.
+// ---------------------------------------------------------------------------
+static lv_obj_t *make_screen_placeholder(const char *title, const char *status)
+{
+    lv_obj_t *scr = make_screen();
+    create_header(scr, title, status);
+
+    lv_obj_t *lbl = lv_label_create(scr);
+    lv_label_set_text(lbl, "Not yet built");
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lbl, COLOR_TEXT_MUTED, 0);
+    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, -20);
+
+    return scr;
+}
+
+// ---------------------------------------------------------------------------
+// Bottom tab bar -- four tabs, text-only for now (mockup's custom icon
+// glyphs deferred as a visual-polish item).
+// ---------------------------------------------------------------------------
+static lv_obj_t *screens[4];
+static const char *tab_names[4] = {"Overview", "Watched", "Needed", "Config"};
+
 // ---------------------------------------------------------------------------
 // Wi-Fi Setup screen -- 2026-09-13. Full-screen takeover, no tab bar, same
 // navigational pattern as the Category Activity Feed / Single-Target
@@ -1509,78 +1582,6 @@ static void update_setup_screen_ui(void)
     lv_obj_set_style_bg_color(stw.status_dot, dot_color, 0);
     lv_label_set_text(stw.status_lbl, text);
 }
-
-/** Updates Wi-Fi row from real-time WiFi.status()/localIP() -- no fetch needed. */
-static void update_config_wifi(void)
-{
-    if (WiFi.status() == WL_CONNECTED) {
-        char buf[48];
-        IPAddress ip = WiFi.localIP();
-        snprintf(buf, sizeof(buf), "Connected %s %d.%d.%d.%d", "\xE2\x80\xA2", ip[0], ip[1], ip[2], ip[3]);
-        lv_label_set_text(cfgw.wifi_lbl, buf);
-        lv_obj_set_style_text_color(cfgw.wifi_lbl, COLOR_TEXT_PRIMARY, 0);
-        lv_obj_set_style_bg_color(cfgw.wifi_dot, COLOR_STATUS_GREEN, 0);
-    } else {
-        lv_label_set_text(cfgw.wifi_lbl, "Disconnected");
-        lv_obj_set_style_text_color(cfgw.wifi_lbl, COLOR_TEXT_MUTED, 0);
-        lv_obj_set_style_bg_color(cfgw.wifi_dot, COLOR_DOT_GRAY, 0);
-    }
-}
-
-static void update_config_preview_status(const PreviewStatus &ps)
-{
-    char adxo_buf[48];
-    char when_buf[24];
-    format_short_datetime(ps.adxo_updated, when_buf, sizeof(when_buf));
-    snprintf(adxo_buf, sizeof(adxo_buf), "OK %s %s", "\xE2\x80\xA2", when_buf);
-    lv_label_set_text(cfgw.adxo_lbl, adxo_buf);
-    lv_obj_set_style_text_color(cfgw.adxo_lbl, COLOR_TEXT_PRIMARY, 0);
-    lv_obj_set_style_bg_color(cfgw.adxo_dot, COLOR_STATUS_GREEN, 0);
-
-    // HamAlert -- no last-spot timestamp at this endpoint (see struct comment
-    // in dxmon_client.h); shows connection state only.
-    if (!ps.hamalert_enabled) {
-        lv_label_set_text(cfgw.hamalert_lbl, "Disabled");
-        lv_obj_set_style_text_color(cfgw.hamalert_lbl, COLOR_TEXT_MUTED, 0);
-        lv_obj_set_style_bg_color(cfgw.hamalert_dot, COLOR_DOT_GRAY, 0);
-    } else if (ps.hamalert_connected && ps.hamalert_logged_in) {
-        lv_label_set_text(cfgw.hamalert_lbl, "Connected");
-        lv_obj_set_style_text_color(cfgw.hamalert_lbl, COLOR_TEXT_PRIMARY, 0);
-        lv_obj_set_style_bg_color(cfgw.hamalert_dot, COLOR_STATUS_GREEN, 0);
-    } else {
-        lv_label_set_text(cfgw.hamalert_lbl, "Disconnected");
-        lv_obj_set_style_text_color(cfgw.hamalert_lbl, COLOR_TEXT_MUTED, 0);
-        lv_obj_set_style_bg_color(cfgw.hamalert_dot, COLOR_DOT_GRAY, 0);
-    }
-
-    char watch_buf[24];
-    snprintf(watch_buf, sizeof(watch_buf), "%d watched", ps.watched_count);
-    lv_label_set_text(cfgw.watchlist_lbl, watch_buf);
-}
-
-// ---------------------------------------------------------------------------
-// Honest placeholders -- Watched/Needed tabs not yet built.
-// ---------------------------------------------------------------------------
-static lv_obj_t *make_screen_placeholder(const char *title, const char *status)
-{
-    lv_obj_t *scr = make_screen();
-    create_header(scr, title, status);
-
-    lv_obj_t *lbl = lv_label_create(scr);
-    lv_label_set_text(lbl, "Not yet built");
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(lbl, COLOR_TEXT_MUTED, 0);
-    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, -20);
-
-    return scr;
-}
-
-// ---------------------------------------------------------------------------
-// Bottom tab bar -- four tabs, text-only for now (mockup's custom icon
-// glyphs deferred as a visual-polish item).
-// ---------------------------------------------------------------------------
-static lv_obj_t *screens[4];
-static const char *tab_names[4] = {"Overview", "Watched", "Needed", "Config"};
 
 static void tab_btn_event_cb(lv_event_t *e)
 {
