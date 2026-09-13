@@ -39,7 +39,7 @@ container restarts and redeploys:
 | File | What it holds |
 |---|---|
 | `watched.json` | Your curated Watched list |
-| `needed.json` | Your curated Needed list |
+| `needed.json` | Your curated Needed list (including any pinned entries and their priority order) |
 | `last_seen.json` | Persisted last-hit record per Watched/Needed entry, surviving HamAlert's own rolling spot buffer aging a hit out |
 | `spot_history.json` | Persisted last-10-spots history per callsign/entity, feeding the drill-down screens |
 | `no_confirms.csv` | Your own never-confirmed-entity list (e.g. exported from LoTW), seeding the Trigger Builder's entity picker |
@@ -54,6 +54,7 @@ both.
 | Variable | Used by | Purpose |
 |---|---|---|
 | `STATION_GRID` | `dxmon-adxo` | Your own grid square (e.g. `EM83`), the origin point for beam heading/distance calculations |
+| `PROPMON_URL` | `dxmon-adxo` | Your PropMon instance's own API address, for the band-condition indicator. Has a working default for a same-network deployment; only needs setting if your PropMon instance lives somewhere else. See the dependency note below. |
 | HamAlert Telnet credentials | `dxmon-hamalert` | Login for HamAlert's Telnet interface |
 
 > **Verify the exact variable names against your own `docker-compose.yml`
@@ -115,6 +116,22 @@ This has previously been caused by a stale bundled mapping file inside
 (confirmed and worked around once already -- see the code's own comments
 near `_init_beam_heading()` for the specific fix and reasoning if it recurs
 for a different country in the future).
+
+## Known external dependency: band condition (PropMon)
+
+The band-condition indicator shown on the device consumes PropMon's own
+JSON API as a read-only external contract -- no shared code, no reaching
+into PropMon's own repo, same pattern this series already uses elsewhere
+(HamOps Console and the Ham Shack Automation propagation dashboard both
+consume PropMon the same way). Cached for 5 minutes; degrades to no
+indicator (rather than a wrong one) if PropMon is unreachable, and picks up
+real condition changes within one cache cycle.
+
+Two bands (160m and 30m) are interpolated rather than natively rated on
+PropMon's own side -- lower confidence on those two specifically if a spot
+ever lands there. Not something to fix from DXMon's side; it's PropMon's
+own code, per this project's own documented boundary with sibling
+instruments in this series.
 
 ## Monitoring
 

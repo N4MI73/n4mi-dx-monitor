@@ -51,17 +51,47 @@ buttons, IntelliSense) won't activate correctly.
 
 ## Before building
 
-Two files need real values filled in before this will build/run correctly
+One file needs a real value filled in before this will build/run correctly
 against your own setup:
 
-1. **`include/config.h`** -- set `DXMON_SERVER_HOST` and `DXMON_SERVER_PORT`
-   to match wherever you deployed the [server](../server/README.md) (default
-   port `8083`).
-2. **`include/wifi_credentials.h`** -- copy `wifi_credentials.h.example` to
-   `wifi_credentials.h` and fill in your real Wi-Fi SSID/password.
-   `wifi_credentials.h` is gitignored -- never commit your real credentials.
-   (There's no on-device Wi-Fi setup flow yet -- the Config screen's "Wi-Fi
-   Setup" button is a visible, deliberately disabled placeholder for now.)
+- **`include/config.h`** -- set `DXMON_SERVER_HOST` and `DXMON_SERVER_PORT`
+  to match wherever you deployed the [server](../server/README.md) (default
+  port `8083`). `WIFI_SETUP_AP_NAME` (the open network name shown during
+  on-device Wi-Fi Setup) can be customized here too, but has a sensible
+  default.
+
+For **first boot only**, you also need:
+
+- **`include/wifi_credentials.h`** -- copy `wifi_credentials.h.example` to
+  `wifi_credentials.h` and fill in your real Wi-Fi SSID/password.
+  `wifi_credentials.h` is gitignored -- never commit your real credentials.
+  These are only ever used as a one-time fallback if no Wi-Fi credentials
+  are already stored on the device (see Wi-Fi Setup below) -- once the
+  device has connected once, either via this file or via the on-device
+  portal, its real credentials live in NVS and this file is no longer
+  consulted.
+
+## Wi-Fi Setup
+
+DXMon has a real, on-device captive-portal Wi-Fi setup -- no reflashing
+needed to change networks. From the **Config** screen, tap **Wi-Fi Setup**:
+
+1. The device scans for nearby networks, then opens its own temporary Wi-Fi
+   network (`WIFI_SETUP_AP_NAME` in `config.h`, default `DXMon-Setup`).
+2. Connect your phone to that network. Most phones will automatically pop
+   open a sign-in page; if not, browse to `192.168.4.1`.
+3. Pick your real network from the list and enter its password.
+   **Connect to the same network your DXMon server is running on** -- the
+   device won't be able to reach it otherwise.
+4. On a successful connection, the device saves the new credentials and
+   restarts. On Cancel, or after a failed attempt you don't want to retry,
+   the device also restarts, back onto whichever network it was using
+   before.
+
+Credential validation is the one deliberately blocking step in this flow --
+the touchscreen is unresponsive for a few seconds while the device actually
+tries connecting with what you entered, since your attention is on the
+phone at that moment, not the device.
 
 ## Building and flashing
 
@@ -89,12 +119,17 @@ platformio device monitor -d <path-to-firmware-folder> -b 115200
   that wasn't found despite a thorough investigation. It's mitigated with a
   scheduled reboot every 15 minutes (`SCHEDULED_REBOOT_INTERVAL_MS` in
   `config.h`) -- a brief blank screen every interval, which fully clears it.
-  This is expected, permanent behavior, not a bug to report.
-- **No on-device Wi-Fi setup flow** -- Wi-Fi credentials are compiled in via
-  `wifi_credentials.h` (see above). Changing networks means re-flashing.
+  This is expected, permanent behavior, not a bug to report. The interval
+  has been retuned more than once already as real-world onset timing was
+  observed to vary -- if you notice the glitch becoming visible well before
+  the next scheduled reboot, that interval may need tightening further for
+  your own unit.
 - **Beam heading depends on the server-side lookup succeeding** -- see the
   [server README](../server/README.md)'s own note on this. If every heading
   is blank at once, that's a server-side issue, not a firmware one.
+- **Band-condition indicator depends on PropMon being reachable** -- see the
+  [server README](../server/README.md)'s own note on this. No indicator
+  shown (rather than an incorrect one) if PropMon can't be reached.
 
 ## Project structure
 
@@ -107,5 +142,7 @@ firmware/
 │   └── dxmon_client.h              -- data structs + fetch function declarations
 └── src/
     ├── main.cpp                    -- UI, navigation, screen logic
-    └── dxmon_client.cpp            -- HTTP fetch + JSON parsing
+    ├── dxmon_client.cpp            -- HTTP fetch + JSON parsing
+    ├── wifi_client.cpp             -- Wi-Fi connection + NVS credential storage
+    └── wifi_portal.cpp             -- captive-portal Wi-Fi Setup (AP, DNS, web form)
 ```
