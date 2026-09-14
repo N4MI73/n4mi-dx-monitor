@@ -2,15 +2,17 @@
 {% block title %}Watched{% endblock %}
 {% block content %}
   <style>
-    /* Added 2026-09-08 -- Dan's own real signal for "time to remove this
-       HamAlert trigger": a real ADXO link, no longer active, end date
-       passed. Reuses the base .badge class (base.html) for size/shape,
-       matching the .badge.upcoming override pattern already established
-       there, and the existing --danger color variable rather than adding
-       a new one. */
+    /* Added 2026-09-08, restyled/repositioned 2026-09-14 -- Dan's own real
+       signal for "time to remove this HamAlert trigger": the DXpedition's
+       end date has passed (now backed by a persisted end date, see the
+       backend's own _watched_is_ended() comment -- no longer a live ADXO
+       join that could silently stop firing once ADXO's own feed moved on).
+       Amber, not red -- this isn't an error state, just a reminder. Reuses
+       the same amber already established for .badge.upcoming elsewhere
+       rather than inventing a new color. */
     .badge.ended {
-      background: var(--danger);
-      color: #2b0505;
+      background: var(--accent-upcoming);
+      color: #241a00;
     }
   </style>
   <p class="meta">{{ entries|length }} watched callsign(s).</p>
@@ -25,14 +27,16 @@
         <div>
           <span class="callsign">{{ w.callsign }}</span>
           &mdash; <span class="dxcc">{{ w.dxcc }}</span>
+        </div>
+        <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.4rem;">
+          <form method="post" action="{{ url_for('page_watch_remove', watched_id=w.id) }}"
+                onsubmit="return confirm('Remove {{ w.callsign }} from watched?');">
+            <button type="submit" class="remove">Remove</button>
+          </form>
           {% if w.ended %}
-            <span class="badge ended" title="ADXO shows this DXpedition's end date has passed and it's no longer active -- consider removing its HamAlert trigger">Ended</span>
+            <span class="badge ended" title="This DXpedition's end date has passed -- consider removing its HamAlert trigger. This stays until you remove the entry yourself.">Ended</span>
           {% endif %}
         </div>
-        <form method="post" action="{{ url_for('page_watch_remove', watched_id=w.id) }}"
-              onsubmit="return confirm('Remove {{ w.callsign }} from watched?');">
-          <button type="submit" class="remove">Remove</button>
-        </form>
       </div>
       {% if w.note %}<div class="info">{{ w.note }}</div>{% endif %}
       <div class="meta">

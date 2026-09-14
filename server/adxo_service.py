@@ -451,7 +451,7 @@ def _watched_by_adxo_id():
     return result
 
 
-def _add_watched(callsign, dxcc, source_adxo_id=None, note=""):
+def _add_watched(callsign, dxcc, source_adxo_id=None, note="", adxo_end=None):
     callsign = (callsign or "").strip()
     dxcc = (dxcc or "").strip()
     if not callsign or not dxcc:
@@ -464,6 +464,11 @@ def _add_watched(callsign, dxcc, source_adxo_id=None, note=""):
         "source_adxo_id": (source_adxo_id or "").strip() or None,
         "note": (note or "").strip(),
         "added": datetime.now(EASTERN).isoformat(),
+        # 2026-09-14: persisted at watch-time, not looked up live -- see
+        # _watched_is_ended()'s own comment for why. Empty string if the
+        # source ADXO entry had no end date, or if this was added without a
+        # source_adxo_id at all (a manual add).
+        "adxo_end": (adxo_end or "").strip(),
     }
     with _watched_lock:
         _watched.append(entry)
@@ -565,27 +570,37 @@ def _needed_entry_kind(entry):
     return "entity"
 
 
-def _watched_adxo_ended(adxo_obj):
+def _watched_is_ended(entry, adxo_obj):
     """Dan's own real signal (2026-09-08) for 'time to remove the HamAlert
-    trigger': a real ADXO link exists, it's no longer active, and its end
-    date has passed. Web-curation-page-only -- not shown on the device.
+    trigger': the DXpedition's end date has passed. Persists until the entry
+    is manually removed -- Dan's own explicit requirement (2026-09-14), so
+    removing it from Watched is also the reminder to remove the matching
+    HamAlert trigger.
 
-    Real, accepted limitation for this first pass: once the underlying ADXO
-    listing itself ages out of the live feed entirely (not just past its own
-    end date, but old enough that DXMon's own ingestion filters it out of
-    the daily poll), this join goes back to None and the flag simply
-    disappears -- indistinguishable from "never had a link." Dan's own
-    explicit call was to build this simple version first (no new
-    persistence) and revisit only if that turns out to be a real problem in
-    practice -- i.e. if a reminder is observed disappearing before it's
-    actually been acted on."""
-    if not adxo_obj:
-        return False
-    if adxo_obj.get("active"):
-        return False
-    end = (adxo_obj.get("end") or "").strip()
+    Real bug found and fixed 2026-09-14: originally computed live from a
+    join against _state['entries'] (the current ADXO feed) on every page
+    load. But ADXO's own source page stops listing an operation at or near
+    its own end date -- so by the time an entry's end date has actually
+    passed, the join has almost always already gone empty, and the flag
+    never fires. Confirmed in practice: Dan reported never once seeing this
+    flag since it was built, despite real DXpeditions having ended in the
+    meantime. Real fix: the end date is now captured and persisted directly
+    on the watched entry itself at watch-time (_add_watched()'s own
+    adxo_end field), so this no longer depends on ADXO's feed still listing
+    the entry at all.
+
+    Falls back to the old live-join check only for entries added before this
+    fix shipped (no adxo_end persisted yet) -- better than nothing for
+    those, though it inherits the original limitation until re-added."""
+    end = (entry.get("adxo_end") or "").strip()
     if not end:
-        return False
+        if not adxo_obj:
+            return False
+        if adxo_obj.get("active"):
+            return False
+        end = (adxo_obj.get("end") or "").strip()
+        if not end:
+            return False
     today = datetime.now(EASTERN).date().isoformat()
     return end < today
 
@@ -1719,7 +1734,7 @@ def _record_spot_history(key, spot_info):
         history.append(spot_info)
         history.sort(key=lambda s: s.get("received_at") or "", reverse=True)
         # Same ISO-string lexicographic comparison technique already
-        # established for _watched_adxo_ended()'s own date check -- these are
+        # established for _watched_is_ended()'s own date check -- these are
         # always the server's own consistently-formatted EASTERN-zoned
         # timestamps, so a direct string comparison is exact without needing
         # to parse either side into a real datetime object.
@@ -2110,18 +2125,29 @@ def page_watched():
                 "info": src["info"],
             }
         e["adxo"] = adxo_obj
-        e["ended"] = _watched_adxo_ended(adxo_obj)
+        e["ended"] = _watched_is_ended(w, adxo_obj)
         enriched.append(e)
     return render_template("watched.html", entries=enriched)
 
 
 @app.route("/watch", methods=["POST"])
 def page_watch_add():
+    # 2026-09-14: capture the source ADXO entry's own end date at watch-time,
+    # so the "ended" flag can persist reliably later -- see _watched_is_ended()'s
+    # own comment for why a live join alone was never actually firing.
+    source_adxo_id = (request.form.get("source_adxo_id") or "").strip()
+    adxo_end = None
+    if source_adxo_id:
+        with _lock:
+            src = next((e for e in _state["entries"] if e["id"] == source_adxo_id), None)
+        if src:
+            adxo_end = src.get("end")
     _add_watched(
         callsign=request.form.get("callsign"),
         dxcc=request.form.get("dxcc"),
-        source_adxo_id=request.form.get("source_adxo_id"),
+        source_adxo_id=source_adxo_id,
         note=request.form.get("note"),
+        adxo_end=adxo_end,
     )
     # Errors are simply ignored here (silently no-op if callsign/dxcc empty) --
     # the form itself makes both fields required client-side; this endpoint stays
