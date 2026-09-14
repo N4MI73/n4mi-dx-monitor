@@ -7,6 +7,11 @@
   functional preview for testing server-side changes and layout before touching
   real hardware.
 </p>
+<p class="meta">
+  Look for small <strong>?</strong> icons around the screens below -- hover over one
+  (or tap it on a phone/tablet) for a short explanation. Tap anywhere else to
+  close it again.
+</p>
 
 <div id="device-frame">
   <div id="device-content"><div class="preview-loading">Loading...</div></div>
@@ -192,6 +197,62 @@
     color: var(--muted);
     font-size: 0.75rem;
     margin-top: 1rem;
+  }
+  /* 2026-09-15: interactive tooltips -- hover reveals on desktop (the
+     natural web convention, and /preview is primarily a desktop-browser
+     tool), tap toggles on mobile/touch (no hover state there). Both work
+     off the same .tt-active class -- CSS handles hover, a small JS
+     handler handles tap, so there's no conflict between the two paths. */
+  .tt-wrap {
+    position: relative;
+    display: inline-block;
+  }
+  .tt-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    border: 1px solid var(--muted);
+    color: var(--muted);
+    font-size: 0.68rem;
+    font-weight: 700;
+    cursor: pointer;
+    margin-left: 0.3rem;
+    vertical-align: middle;
+    user-select: none;
+    line-height: 1;
+  }
+  .tt-wrap:hover .tt-icon,
+  .tt-wrap.tt-active .tt-icon {
+    border-color: var(--accent-active);
+    color: var(--accent-active);
+  }
+  .tt-bubble {
+    display: none;
+    position: absolute;
+    z-index: 50;
+    top: 130%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 220px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.6rem 0.7rem;
+    font-size: 0.78rem;
+    color: var(--text);
+    font-weight: normal;
+    text-transform: none;
+    letter-spacing: normal;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    text-align: left;
+    line-height: 1.35;
+  }
+  .tt-wrap:hover .tt-bubble,
+  .tt-wrap.tt-active .tt-bubble {
+    display: block;
   }
 </style>
 
@@ -403,10 +464,13 @@ function renderOverviewWatchedPanel() {
 // inline, DXCC below, mode badge + frequency in the top-right, timestamp
 // below that. Genuinely different from the Overview panel above -- these
 // are two separate real screens on the device, not one shared layout.
-function renderWatchedRosterRow(e) {
+function renderWatchedRosterRow(e, index) {
   const active = !!e.last_spot;
   const dotColor = active ? 'var(--accent-active)' : 'var(--muted)';
   const textClass = active ? '' : ' device-stale';
+  const dotTooltip = index === 0
+    ? tt('Blue means a live hit right now; gray means nothing currently active for this entry. Tap any row to see its recent spot history.')
+    : '';
 
   let rightSide = '';
   if (active) {
@@ -419,7 +483,7 @@ function renderWatchedRosterRow(e) {
 
   return '<div class="device-row' + textClass + ' clickable" onclick="openHistoryCallsign(\'' + jsAttr(e.callsign) + '\')" style="display: flex; justify-content: space-between; align-items: flex-start;">' +
     '<div>' +
-      '<span style="color: ' + dotColor + ';">&#9679;</span> ' +
+      '<span style="color: ' + dotColor + ';">&#9679;</span>' + dotTooltip + ' ' +
       '<span class="device-callsign" style="font-size: 1.1rem;">' + escapeHtml(e.callsign) + '</span> ' +
       formatBeamSuffix(e.beam) +
       '<div class="device-dxcc">' + escapeHtml(e.dxcc) + '</div>' +
@@ -487,12 +551,16 @@ function renderOverview() {
   const neededCount = (neededData && neededData.needed) ? neededData.needed.length : 0;
   return '<div class="overview-split">' +
     '<div class="overview-panel clickable" onclick="openActivityFeed(\'watched\')" style="border-left: 3px solid var(--accent-active);">' +
-      '<div class="overview-panel-title" style="color: var(--accent-active);">Watched</div>' +
+      '<div class="overview-panel-title" style="color: var(--accent-active);">Watched' +
+        tt('Shows your most active Watched entry -- a real hit takes priority over a quiet one. Tap this panel for a recent-activity feed across everything you\'re watching.') +
+      '</div>' +
       renderOverviewWatchedPanel() +
     '</div>' +
     '<div class="overview-panel clickable" onclick="openActivityFeed(\'needed\')" style="border-left: 3px solid var(--accent-upcoming);">' +
       '<div style="display: flex; justify-content: space-between; align-items: baseline;">' +
-        '<div class="overview-panel-title" style="color: var(--accent-upcoming); margin-bottom: 0;">Needed</div>' +
+        '<div class="overview-panel-title" style="color: var(--accent-upcoming); margin-bottom: 0;">Needed' +
+          tt('Shows your most active Needed entity or slot. Tap this panel for a recent-activity feed across everything you\'re tracking.') +
+        '</div>' +
         '<span style="font-size: 0.7rem; color: var(--muted);">' + neededCount + ' TRACKED</span>' +
       '</div>' +
       renderNeededPanel() +
@@ -506,10 +574,13 @@ function renderWatched() {
   return watched.map(renderWatchedRosterRow).join('');
 }
 
-function renderNeededRow(n) {
+function renderNeededRow(n, index) {
   const live = !!n.last_spot;
   const seen = !live && !!n.last_seen;
   const spot = n.last_spot || n.last_seen;
+  const kindTooltip = index === 0
+    ? tt('ENTITY = a whole never-confirmed DXCC entity, any band or mode. SLOT = a specific band/mode gap on an entity you\'ve already confirmed. Tap any row to see its history.')
+    : '';
 
   let subtitle = '';
   if (n.kind === 'slot') {
@@ -532,7 +603,7 @@ function renderNeededRow(n) {
 
   return '<div class="device-row clickable" onclick="openHistoryNeeded(\'' + jsAttr(n.id) + '\')" style="display: flex; justify-content: space-between; align-items: flex-start;">' +
     '<div>' +
-      renderNeededKindBadge(n.kind) +
+      renderNeededKindBadge(n.kind) + kindTooltip +
       '<span class="device-dxcc">' + escapeHtml(n.entity) + '</span>' +
       subtitle +
       '<div class="device-stat" style="margin-top: 0.2rem;">' + spotLine + '</div>' +
@@ -570,16 +641,18 @@ function renderConfig() {
   // either one, unlike everything else on this screen. Shown honestly as
   // preview-only placeholders (neutral dot) rather than guessed at.
   return '<div>' +
-    '<div class="config-row"><span>' + configDot('var(--muted)') + 'Wi-Fi</span><span>n/a (browser preview)</span></div>' +
-    '<div class="config-row"><span>' + configDot(adxo.poll_ok ? 'var(--accent-active)' : 'var(--danger)') + 'ADXO Poll</span><span>' + pollLine + '</span></div>' +
-    '<div class="config-row"><span>' + configDot(hamalertConnected ? 'var(--accent-active)' : 'var(--muted)') + 'HamAlert Telnet</span><span>' + hamalertLine + '</span></div>' +
-    '<div class="config-row"><span>' + configDot('var(--accent-active)') + 'Watchlist</span><span>' + previewStatus.watched_count + ' watched</span></div>' +
-    '<div class="config-row"><span>' + configDot('var(--accent-active)') + 'Curate at</span><span>' + escapeHtml(previewStatus.curate_at || '--') + '</span></div>' +
-    '<div class="config-row"><span>' + configDot('var(--muted)') + 'Firmware</span><span>n/a (browser preview)</span></div>' +
+    '<div class="config-row"><span>' + configDot('var(--muted)') + 'Wi-Fi' + tt('Live connection status and IP address -- not available here in the browser preview, only on the real device.') + '</span><span>n/a (browser preview)</span></div>' +
+    '<div class="config-row"><span>' + configDot(adxo.poll_ok ? 'var(--accent-active)' : 'var(--danger)') + 'ADXO Poll' + tt('Whether the backend\'s last daily check of NG3K\'s DXpedition schedule succeeded, and when.') + '</span><span>' + pollLine + '</span></div>' +
+    '<div class="config-row"><span>' + configDot(hamalertConnected ? 'var(--accent-active)' : 'var(--muted)') + 'HamAlert Telnet' + tt('Whether the real-time spot listener is currently connected to HamAlert.') + '</span><span>' + hamalertLine + '</span></div>' +
+    '<div class="config-row"><span>' + configDot('var(--accent-active)') + 'Watchlist' + tt('How many DXpeditions you currently have on your Watched list.') + '</span><span>' + previewStatus.watched_count + ' watched</span></div>' +
+    '<div class="config-row"><span>' + configDot('var(--accent-active)') + 'Curate at' + tt('The web address for managing your Watched and Needed lists -- worth bookmarking.') + '</span><span>' + escapeHtml(previewStatus.curate_at || '--') + '</span></div>' +
+    '<div class="config-row"><span>' + configDot('var(--muted)') + 'Firmware' + tt('The device\'s own firmware version -- not available here in the browser preview, only on the real device.') + '</span><span>n/a (browser preview)</span></div>' +
     '</div>' +
-    '<div style="display: flex; gap: 0.75rem; margin-top: 1rem;">' +
+    '<div style="display: flex; gap: 0.75rem; margin-top: 1rem; align-items: center;">' +
       '<button onclick="loadData()" style="flex: 1;">Force Refresh</button>' +
+      tt('Pulls fresh data immediately instead of waiting for the next automatic update.') +
       '<button onclick="openWifiSetupPreview()" style="flex: 1;">Wi-Fi Setup</button>' +
+      tt('Opens the on-device Wi-Fi setup flow, for connecting to a different network without reflashing. This preview only shows what that screen looks like -- it can\'t run the real setup.') +
     '</div>';
 }
 
@@ -602,6 +675,25 @@ let currentView = { type: 'tab' };
 function jsAttr(s) {
   return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
+
+// 2026-09-15: interactive tooltip helper -- a small "?" icon that reveals a
+// short explanation on hover (desktop) or tap (mobile). tt-active is toggled
+// by the click handler below; CSS's own :hover rule handles the desktop
+// case independently, so the two never conflict. stopPropagation() keeps a
+// tap on the icon itself from immediately triggering the document-level
+// listener that closes it again.
+function tt(text) {
+  return '<span class="tt-wrap" onclick="event.stopPropagation(); this.classList.toggle(\'tt-active\');">' +
+    '<span class="tt-icon">?</span>' +
+    '<span class="tt-bubble">' + escapeHtml(text) + '</span>' +
+  '</span>';
+}
+
+document.addEventListener('click', function() {
+  document.querySelectorAll('.tt-wrap.tt-active').forEach(function(el) {
+    el.classList.remove('tt-active');
+  });
+});
 
 async function fetchJson(url) {
   const res = await fetch(url);
