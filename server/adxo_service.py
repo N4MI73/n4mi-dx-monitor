@@ -605,6 +605,35 @@ def _watched_is_ended(entry, adxo_obj):
     return end < today
 
 
+def _adxo_ending_soon_label(entry):
+    """New 2026-09-15, Dan's own spec: a countdown flag for Browse ADXO
+    entries whose real end date is close -- 'Ends in 3 days' -> 'Ends in 2
+    days' -> 'Ends tomorrow' -> 'Ends today', nothing shown beyond a 3-day
+    window. Only for entries ADXO itself currently marks active -- an entry
+    that hasn't started yet "ending soon" isn't a meaningful signal the way
+    it is for something actually in progress right now. Returns None (no
+    flag) rather than raising on any malformed/missing end date -- this is
+    a nice-to-have nudge, never worth breaking the page over."""
+    if not entry.get("active"):
+        return None
+    end_str = (entry.get("end") or "").strip()
+    if not end_str:
+        return None
+    try:
+        end_date = datetime.strptime(end_str, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    today = datetime.now(EASTERN).date()
+    days_left = (end_date - today).days
+    if days_left == 0:
+        return "Ends today"
+    if days_left == 1:
+        return "Ends tomorrow"
+    if days_left in (2, 3):
+        return f"Ends in {days_left} days"
+    return None
+
+
 def _needed_days_old(entry):
     """Days since a Needed entry was curated, for the web page's stale-entry flag
     (2026-09-05) -- purely a web curation UI concern, not exposed via
@@ -2094,6 +2123,10 @@ def page_index():
     # Active first, then soonest-upcoming -- matches the Watched screen's own sort rule
     # already decided for firmware, applied here too for consistency.
     entries.sort(key=lambda e: (not e["active"], e["begin"]))
+    # 2026-09-15: attach the ending-soon countdown label here, not in the
+    # template -- Jinja has no built-in date arithmetic, same reasoning
+    # already applied to Needed's own days_old flag.
+    entries = [dict(e, ending_soon=_adxo_ending_soon_label(e)) for e in entries]
     watched_map = _watched_by_adxo_id()
     return render_template("index.html", entries=entries, watched_map=watched_map)
 

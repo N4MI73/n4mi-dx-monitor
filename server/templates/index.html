@@ -1,6 +1,19 @@
 {% extends "base.html" %}
 {% block title %}Browse{% endblock %}
 {% block content %}
+  <style>
+    /* 2026-09-15: ending-soon countdown flag ("Ends in 3 days" -> "Ends
+       today"), Dan's own spec. Outlined red, reusing the exact visual
+       language needed.html's own .badge.stale already established for
+       "this deserves a look soon" -- distinct from the solid amber
+       .badge.upcoming already used on this same page for "hasn't started
+       yet," so the two can't be visually confused with each other. */
+    .badge.ending-soon {
+      background: transparent;
+      border: 1px solid var(--danger);
+      color: var(--danger);
+    }
+  </style>
   <p class="meta">{{ entries|length }} current/upcoming ADXO entries.</p>
 
   {% if not entries %}
@@ -14,9 +27,14 @@
           <span class="dxcc">{{ e.dxcc }}</span>
           &mdash; <span class="callsign">{{ e.callsign }}</span>
         </div>
-        <span class="badge {{ '' if e.active else 'upcoming' }}">
-          {{ 'Active now' if e.active else 'Upcoming' }}
-        </span>
+        <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.35rem;">
+          <span class="badge {{ '' if e.active else 'upcoming' }}">
+            {{ 'Active now' if e.active else 'Upcoming' }}
+          </span>
+          {% if e.ending_soon %}
+            <span class="badge ending-soon">{{ e.ending_soon }}</span>
+          {% endif %}
+        </div>
       </div>
       <div class="dates">{{ e.begin }} &ndash; {{ e.end }} &middot; QSL: {{ e.qsl }} &middot; {{ e.source }}</div>
       <div class="info">{{ e.info }}</div>
