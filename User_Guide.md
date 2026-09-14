@@ -35,7 +35,7 @@ shows your Needed list. Each panel shows:
   from PropMon. No dot at all means the condition isn't available right
   now -- not a fourth "unknown" state, just no data.
 - The spotted callsign and a beam heading + distance to it (e.g. "5A1AL --
-  62 deg / 5708 mi"), so you know which direction to point your antenna.
+  62 deg / 9186 km"), so you know which direction to point your antenna.
 - A count of how many other entries you're tracking.
 
 If nothing's currently active, the panel falls back to showing the last real
@@ -184,7 +184,10 @@ the device.
 
 An in-browser rendering of the device's own screens, useful as a quick
 remote check when the physical device isn't nearby. It's meant as a
-good-enough glance, not an exact mirror of every device screen.
+good-enough glance, not an exact mirror of every device screen -- the
+band-condition dot and drill-down screens are included; pin/favorite
+badges and the new-spot flash currently are not. Small **?** icons around
+the screens give short explanations on hover (or tap, on a phone/tablet).
 
 ## Beam heading
 

@@ -14,6 +14,15 @@
       background: var(--accent-upcoming);
       color: #241a00;
     }
+    /* 2026-09-15: same Edit-link convention needed.html already established
+       -- kept as its own local rule since these two templates don't share
+       a stylesheet. */
+    .edit-link {
+      color: var(--muted);
+      font-size: 0.85rem;
+      align-self: center;
+      text-decoration: underline;
+    }
   </style>
   <p class="meta">{{ entries|length }} watched callsign(s).</p>
 
@@ -29,10 +38,13 @@
           &mdash; <span class="dxcc">{{ w.dxcc }}</span>
         </div>
         <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.4rem;">
-          <form method="post" action="{{ url_for('page_watch_remove', watched_id=w.id) }}"
-                onsubmit="return confirm('Remove {{ w.callsign }} from watched?');">
-            <button type="submit" class="remove">Remove</button>
-          </form>
+          <div style="display: flex; gap: 0.6rem; align-items: center;">
+            <a href="{{ url_for('page_watched_edit_form', watched_id=w.id) }}" class="edit-link">Edit</a>
+            <form method="post" action="{{ url_for('page_watch_remove', watched_id=w.id) }}"
+                  onsubmit="return confirm('Remove {{ w.callsign }} from watched?');">
+              <button type="submit" class="remove">Remove</button>
+            </form>
+          </div>
           {% if w.ended %}
             <span class="badge ended" title="This DXpedition's end date has passed -- consider removing its HamAlert trigger. This stays until you remove the entry yourself.">Ended</span>
           {% endif %}
@@ -54,4 +66,30 @@
       </div>
     </div>
   {% endfor %}
+
+  {% if edit_entry %}
+    <div class="card" style="margin-top: 1.5rem;">
+      <div class="dxcc">Edit watched entry</div>
+      <form class="watch-form" method="post"
+            action="{{ url_for('page_watched_edit_save', watched_id=edit_entry.id) }}"
+            style="margin-top: 0.7rem; flex-direction: column; align-items: stretch; gap: 0.9rem;">
+        <div>
+          <input type="text" name="callsign" value="{{ edit_entry.callsign }}" required
+                 title="The real on-air callsign -- can be a compound callsign, e.g. 9N/OM0GA">
+          <div class="meta" style="margin-top: 0.25rem;">
+            ADXO often only gives a DXpedition's base prefix (e.g. "9N" for Nepal).
+            If the real on-air callsign is a compound form (e.g. "9N/OM0GA," visible in
+            ADXO's own "By X as Y" text), enter it here -- it'll match HamAlert's own
+            "Full Callsign" condition correctly.
+          </div>
+        </div>
+        <input type="text" name="dxcc" value="{{ edit_entry.dxcc }}" required placeholder="DXCC entity">
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <input type="text" name="note" placeholder="note (optional)" value="{{ edit_entry.note or '' }}">
+          <button type="submit">Save</button>
+          <a href="{{ url_for('page_watched') }}" style="color: var(--muted); font-size: 0.85rem;">Cancel</a>
+        </div>
+      </form>
+    </div>
+  {% endif %}
 {% endblock %}

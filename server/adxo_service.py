@@ -476,6 +476,34 @@ def _add_watched(callsign, dxcc, source_adxo_id=None, note="", adxo_end=None):
     return entry, None
 
 
+def _update_watched(watched_id, callsign, dxcc, note=""):
+    """In-place edit (2026-09-15) -- id, source_adxo_id, adxo_end, and added
+    are all preserved unchanged; only callsign/dxcc/note are replaced.
+
+    Real motivation, Dan's own: ADXO only ever provides a DXpedition's base
+    prefix (e.g. "9N" for Nepal), but the real on-air callsign is often a
+    compound form (e.g. "9N/OM0GA," visible in ADXO's own "By X as Y" text).
+    HamAlert's own "Full Callsign" condition matches on exactly that compound
+    form. Confirmed via direct code read before building this:
+    _find_last_spot_for_callsign() already checks a spot's `fullCallsign`
+    field, not just `callsign` -- so correcting the stored value here is the
+    entire fix. No matching-logic change was needed anywhere else."""
+    callsign = (callsign or "").strip()
+    dxcc = (dxcc or "").strip()
+    if not callsign or not dxcc:
+        return None, "Callsign and DXCC entity are both required."
+
+    with _watched_lock:
+        for w in _watched:
+            if w["id"] == watched_id:
+                w["callsign"] = callsign
+                w["dxcc"] = dxcc
+                w["note"] = (note or "").strip()
+                _save_watched()
+                return w, None
+    return None, "Not found."
+
+
 def _remove_watched(watched_id):
     with _watched_lock:
         before = len(_watched)
@@ -2131,18 +2159,15 @@ def page_index():
     return render_template("index.html", entries=entries, watched_map=watched_map)
 
 
-@app.route("/watched")
-def page_watched():
+def _watched_enriched_entries():
+    """Shared enrichment for /watched -- beam heading, the live ADXO join
+    (for display only, e.g. "ends <date>"), and the Ended flag. Extracted
+    2026-09-15 so the new edit-mode GET route can reuse this exactly rather
+    than duplicating it and risking the two drifting apart over time."""
     with _watched_lock:
         entries = sorted(_watched, key=lambda w: w["added"], reverse=True)
-    # Real gap closed 2026-09-08: this page previously never joined ADXO data
-    # at all (unlike /api/dxmon/watched, which does) -- needed here now for
-    # the "DXpedition ended" reminder, so pulled in the same join pattern
-    # _build_dxmon_watched() already uses.
     with _lock:
         adxo_by_id = {e["id"]: e for e in _state["entries"]}
-    # Copy each entry (never mutate _watched itself) and attach beam heading for
-    # display -- kept separate from the persisted watched.json record.
     enriched = []
     for w in entries:
         e = dict(w)
@@ -2160,7 +2185,41 @@ def page_watched():
         e["adxo"] = adxo_obj
         e["ended"] = _watched_is_ended(w, adxo_obj)
         enriched.append(e)
-    return render_template("watched.html", entries=enriched)
+    return enriched
+
+
+@app.route("/watched")
+def page_watched():
+    # Real gap closed 2026-09-08: this page previously never joined ADXO data
+    # at all (unlike /api/dxmon/watched, which does) -- needed here now for
+    # the "DXpedition ended" reminder, so pulled in the same join pattern
+    # _build_dxmon_watched() already uses. Enrichment logic itself lives in
+    # _watched_enriched_entries() (extracted 2026-09-15), shared with the new
+    # edit-mode route below.
+    return render_template("watched.html", entries=_watched_enriched_entries())
+
+
+@app.route("/watched/edit/<watched_id>", methods=["GET"])
+def page_watched_edit_form(watched_id):
+    # 2026-09-15: mirrors Needed's own edit-form pattern exactly -- reuses
+    # watched.html's own card in edit mode (pre-filled, posts to
+    # page_watched_edit_save) rather than a separate template.
+    with _watched_lock:
+        edit_entry = next((w for w in _watched if w["id"] == watched_id), None)
+    if not edit_entry:
+        return redirect(url_for("page_watched"))
+    return render_template("watched.html", entries=_watched_enriched_entries(), edit_entry=edit_entry)
+
+
+@app.route("/watched/edit/<watched_id>", methods=["POST"])
+def page_watched_edit_save(watched_id):
+    _update_watched(
+        watched_id,
+        callsign=request.form.get("callsign"),
+        dxcc=request.form.get("dxcc"),
+        note=request.form.get("note"),
+    )
+    return redirect(url_for("page_watched"))
 
 
 @app.route("/watch", methods=["POST"])
