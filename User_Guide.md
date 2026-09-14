@@ -35,7 +35,7 @@ shows your Needed list. Each panel shows:
   from PropMon. No dot at all means the condition isn't available right
   now -- not a fourth "unknown" state, just no data.
 - The spotted callsign and a beam heading + distance to it (e.g. "5A1AL --
-  62 deg / 9186 km"), so you know which direction to point your antenna.
+  62 deg / 5708 mi"), so you know which direction to point your antenna.
 - A count of how many other entries you're tracking.
 
 If nothing's currently active, the panel falls back to showing the last real
