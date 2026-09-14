@@ -234,9 +234,8 @@
     position: absolute;
     z-index: 50;
     top: 130%;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 220px;
+    left: 0;
+    width: 200px;
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -249,6 +248,19 @@
     box-shadow: 0 4px 12px rgba(0,0,0,0.4);
     text-align: left;
     line-height: 1.35;
+  }
+  /* 2026-09-15 real bug fix: centering the bubble on the icon (left: 50% +
+     translateX(-50%)) pushed roughly half of it off-screen whenever the
+     icon sat near a container's left edge -- which was nearly every icon
+     on this page, confirmed from real screenshots showing the same few
+     characters clipped off the start of every tooltip. Left-aligned
+     growing rightward fixes the common case; .tt-align-right (used only
+     for the one icon that sits near the frame's own right edge) grows
+     leftward instead, so neither edge of the fixed-width device frame
+     clips it. */
+  .tt-align-right .tt-bubble {
+    left: auto;
+    right: 0;
   }
   .tt-wrap:hover .tt-bubble,
   .tt-wrap.tt-active .tt-bubble {
@@ -353,14 +365,34 @@ function renderNeededKindBadge(kind) {
 // not a single flattened "freq · mode · time" line -- confirmed against
 // real device photos. Shared by both Overview panels since both use this
 // exact structure.
-function renderLabeledStatRow(freqText, modeText, dateText) {
+// Mirrors main.cpp's own band_condition_color() -- green/amber/red for
+// good/fair/poor, or null (no dot at all) when condition data isn't
+// available. Same vocabulary reused everywhere else band condition already
+// appears in this app.
+function bandConditionColor(cond) {
+  if (cond === 'good') return 'var(--accent-watched)';
+  if (cond === 'fair') return 'var(--accent-upcoming)';
+  if (cond === 'poor') return 'var(--danger)';
+  return null;
+}
+
+function renderLabeledStatRow(freqText, modeText, dateText, bandCondition) {
   const modeHtml = modeText
     ? '<span class="device-badge slot" style="margin-right: 0;">' + escapeHtml(modeText.toUpperCase()) + '</span>'
     : '<span class="device-stat">--</span>';
+  // 2026-09-15: band-condition dot, added to /preview for the first time --
+  // this existed on the real device already but was never brought over
+  // here. Hidden entirely (not a fourth "unknown" color) when condition
+  // data isn't available, matching the device's own behavior exactly.
+  const dotColor = bandConditionColor(bandCondition);
+  const dotHtml = dotColor
+    ? '<span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ' + dotColor + '; margin-left: 0.4rem; vertical-align: middle;"></span>' +
+      tt('Current band condition from PropMon, for this spot\'s own band (green = good, amber = fair, red = poor). No dot means condition data isn\'t available right now.')
+    : '';
   return '<div style="display: flex; gap: 1rem; margin-top: 0.5rem;">' +
     '<div style="flex: 1.2;">' +
       '<div style="font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 0.2rem;">Frequency</div>' +
-      '<div class="device-stat" style="color: var(--text);">' + escapeHtml(freqText) + '</div>' +
+      '<div class="device-stat" style="color: var(--text);">' + escapeHtml(freqText) + dotHtml + '</div>' +
     '</div>' +
     '<div style="flex: 0.8;">' +
       '<div style="font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 0.2rem;">Mode</div>' +
@@ -431,7 +463,7 @@ function renderOverviewWatchedPanel() {
 
   let statRow, commentText;
   if (hasSpot) {
-    statRow = renderLabeledStatRow(e.last_spot.frequency + ' MHz', e.last_spot.mode, formatShortDateTime(e.last_spot.received_at));
+    statRow = renderLabeledStatRow(e.last_spot.frequency + ' MHz', e.last_spot.mode, formatShortDateTime(e.last_spot.received_at), e.last_spot.band_condition);
     commentText = e.last_spot.comment ? '"' + e.last_spot.comment + '"' : '';
   } else {
     statRow = renderLabeledStatRow('--', '', 'Not yet spotted');
@@ -516,7 +548,7 @@ function renderNeededPanel() {
       renderNeededKindBadge(liveEntry.kind) +
       '<span class="device-dxcc">' + escapeHtml(liveEntry.entity) + '</span>' +
       subtitle +
-      renderLabeledStatRow(spot.frequency + ' MHz', spot.mode, formatShortDateTime(spot.received_at)) +
+      renderLabeledStatRow(spot.frequency + ' MHz', spot.mode, formatShortDateTime(spot.received_at), spot.band_condition) +
       '<div class="device-stat" style="margin-top: 0.3rem;">' +
         '<span class="device-callsign" style="font-size: 1rem;">' + escapeHtml(spot.callsign) + '</span> ' +
         formatBeamSuffix(spot.beam) +
@@ -652,7 +684,7 @@ function renderConfig() {
       '<button onclick="loadData()" style="flex: 1;">Force Refresh</button>' +
       tt('Pulls fresh data immediately instead of waiting for the next automatic update.') +
       '<button onclick="openWifiSetupPreview()" style="flex: 1;">Wi-Fi Setup</button>' +
-      tt('Opens the on-device Wi-Fi setup flow, for connecting to a different network without reflashing. This preview only shows what that screen looks like -- it can\'t run the real setup.') +
+      tt('Opens the on-device Wi-Fi setup flow, for connecting to a different network without reflashing. This preview only shows what that screen looks like -- it can\'t run the real setup.', 'right') +
     '</div>';
 }
 
@@ -678,15 +710,31 @@ function jsAttr(s) {
 
 // 2026-09-15: interactive tooltip helper -- a small "?" icon that reveals a
 // short explanation on hover (desktop) or tap (mobile). tt-active is toggled
-// by the click handler below; CSS's own :hover rule handles the desktop
-// case independently, so the two never conflict. stopPropagation() keeps a
-// tap on the icon itself from immediately triggering the document-level
-// listener that closes it again.
-function tt(text) {
-  return '<span class="tt-wrap" onclick="event.stopPropagation(); this.classList.toggle(\'tt-active\');">' +
+// by toggleTooltip() below; CSS's own :hover rule handles the desktop case
+// independently, so the two never conflict. `align` defaults to left-aligned
+// (bubble grows rightward from the icon) -- pass 'right' for an icon sitting
+// near the device frame's own right edge, so the bubble grows leftward
+// instead and neither edge clips it (see the CSS comment for the real bug
+// this fixes).
+function tt(text, align) {
+  const alignClass = align === 'right' ? ' tt-align-right' : '';
+  return '<span class="tt-wrap' + alignClass + '" onclick="event.stopPropagation(); toggleTooltip(this);">' +
     '<span class="tt-icon">?</span>' +
     '<span class="tt-bubble">' + escapeHtml(text) + '</span>' +
   '</span>';
+}
+
+// Real bug fix, 2026-09-15: closes every other open tooltip before opening
+// the tapped one, so only one is ever visible at a time on tap -- confirmed
+// from a real screenshot showing two tooltips open simultaneously after
+// tapping a second icon without dismissing the first. Toggling an
+// already-open tooltip just closes it, rather than reopening immediately.
+function toggleTooltip(el) {
+  const wasActive = el.classList.contains('tt-active');
+  document.querySelectorAll('.tt-wrap.tt-active').forEach(function(w) {
+    w.classList.remove('tt-active');
+  });
+  if (!wasActive) el.classList.add('tt-active');
 }
 
 document.addEventListener('click', function() {
