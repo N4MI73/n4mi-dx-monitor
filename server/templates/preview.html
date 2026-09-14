@@ -5,8 +5,7 @@
   Virtual DXMon device preview -- an in-browser rendering of the device screens,
   fed by this server's own live data. Not a pixel-perfect firmware mockup; a
   functional preview for testing server-side changes and layout before touching
-  real hardware. The Needed tab is an honest placeholder -- that feature isn't
-  built yet.
+  real hardware.
 </p>
 
 <div id="device-frame">
@@ -580,7 +579,7 @@ function renderConfig() {
     '</div>' +
     '<div style="display: flex; gap: 0.75rem; margin-top: 1rem;">' +
       '<button onclick="loadData()" style="flex: 1;">Force Refresh</button>' +
-      '<button disabled style="flex: 1; opacity: 0.5; cursor: default;">Wi-Fi Setup (coming soon)</button>' +
+      '<button onclick="openWifiSetupPreview()" style="flex: 1;">Wi-Fi Setup</button>' +
     '</div>';
 }
 
@@ -649,6 +648,47 @@ function openHistoryNeeded(neededId) {
 function goBackFromDrilldown() {
   currentView = currentView.parent || { type: 'tab' };
   renderCurrentView();
+}
+
+// 2026-09-15: Wi-Fi Setup static depiction -- NOT a live simulation (no real
+// portal, scan, or AP in a browser), just an accurate visual of what the
+// device's own Setup screen shows, matching main.cpp's make_screen_setup()
+// layout exactly (same header style, same reminder/AP-name/IP/status
+// positions). Shows a representative "waiting for connection" state, since
+// that's the state someone's actually looking at the real device for
+// longest -- not the brief "Starting scan..." transient. Cancel is the one
+// real, functional control here, matching Dan's own explicit scope --
+// reuses the exact same back-navigation mechanism as the drill-down
+// screens, since "return to wherever you came from" is the same job either
+// way. Deliberately no back arrow -- the real device's own Setup screen
+// has none either, only Cancel.
+function openWifiSetupPreview() {
+  currentView = { type: 'wifi-setup', parent: currentView };
+  renderCurrentView();
+}
+
+function renderWifiSetupScreen() {
+  return '<h3 style="margin: 0 0 0.75rem; color: var(--text);">WI-FI SETUP</h3>' +
+    '<p style="color: var(--accent-upcoming); font-size: 0.85rem;">' +
+      'Connect to the same Wi-Fi network your DXMon server (NAS) is running on -- ' +
+      'otherwise DXMon won\'t be able to reach it once connected.' +
+    '</p>' +
+    '<div class="meta" style="margin-top: 1rem;">1. CONNECT YOUR PHONE TO:</div>' +
+    '<div style="font-size: 1rem; color: var(--text);">DXMon-Setup</div>' +
+    '<div class="meta" style="margin-top: 1rem;">2. IF A SIGN-IN PAGE DOESN\'T OPEN AUTOMATICALLY, BROWSE TO:</div>' +
+    '<div style="font-size: 1rem; color: var(--text);">192.168.4.1</div>' +
+    '<div class="meta" style="margin-top: 1.2rem;">STATUS</div>' +
+    '<div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.3rem;">' +
+      '<span style="width: 10px; height: 10px; border-radius: 5px; background: var(--accent-watched); display: inline-block;"></span>' +
+      '<span style="font-size: 1rem; color: var(--text);">Waiting for connection...</span>' +
+    '</div>' +
+    '<button onclick="goBackFromDrilldown()" style="margin-top: 1.5rem; background: transparent; ' +
+      'border: 2px solid var(--danger); color: var(--danger); font-weight: 600;">Cancel</button>' +
+    '<p class="meta" style="margin-top: 1rem;">' +
+      'This is a static depiction, not a live simulation -- the real device\'s scan, ' +
+      'network list, and connection flow only run on real hardware. Cancel is the one ' +
+      'functional control here, returning you to Config.' +
+    '</p>';
 }
 
 // Shared header for both drill-down screen types -- back arrow, small
@@ -816,6 +856,8 @@ function renderCurrentView() {
     content.innerHTML = renderHistoryCallsignScreen(currentView);
   } else if (currentView.type === 'history-needed') {
     content.innerHTML = renderHistoryNeededScreen(currentView);
+  } else if (currentView.type === 'wifi-setup') {
+    content.innerHTML = renderWifiSetupScreen();
   }
 }
 
