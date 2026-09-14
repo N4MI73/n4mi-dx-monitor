@@ -2148,14 +2148,31 @@ def api_preview_status():
 def page_index():
     with _lock:
         entries = list(_state["entries"])
+    watched_map = _watched_by_adxo_id()
     # Active first, then soonest-upcoming -- matches the Watched screen's own sort rule
     # already decided for firmware, applied here too for consistency.
     entries.sort(key=lambda e: (not e["active"], e["begin"]))
+    # 2026-09-15: watched entries float to the top, sorted by soonest-ending
+    # among themselves -- Dan's own real spec ("the ones I've already
+    # decided to watch matter more than ones I haven't looked at yet").
+    # Same layered-stable-sort technique already used elsewhere in this
+    # codebase (Watched/Needed recency, Needed pin/favorite): applied as
+    # the LAST (most significant) sort, a tuple key naturally ties every
+    # non-watched entry at (1, "") -- leaving the pass above's own order
+    # completely undisturbed for all of them, only reordering the watched
+    # group itself. A watched entry with no real end date (shouldn't
+    # normally happen -- ADXO entries always have one) sorts to the back of
+    # the watched group rather than the front, so "soonest ending" isn't
+    # misled by a missing value looking like the earliest one.
+    def _watched_sort_key(e):
+        if e["id"] in watched_map:
+            return (0, e.get("end") or "9999-99-99")
+        return (1, "")
+    entries.sort(key=_watched_sort_key)
     # 2026-09-15: attach the ending-soon countdown label here, not in the
     # template -- Jinja has no built-in date arithmetic, same reasoning
     # already applied to Needed's own days_old flag.
     entries = [dict(e, ending_soon=_adxo_ending_soon_label(e)) for e in entries]
-    watched_map = _watched_by_adxo_id()
     return render_template("index.html", entries=entries, watched_map=watched_map)
 
 
