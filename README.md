@@ -2,7 +2,7 @@
 
 **"Is a DX station I care about active right now, and where should I listen?"**
 
-![Overview screen on DXMon v1.0. More pictures of other screens coming soon!](images/dxmon_device.png)
+![Overview screen on DXMon v1.0.](images/dxmon_device.png)
 
 DXMon is a small, glanceable desk instrument for the ham shack. It watches for
 specific DXpeditions and DXCC entities you still need, and gives you an
@@ -27,6 +27,8 @@ glance:
 - Shows current band conditions for a spotted station (via PropMon, this
   series' own propagation instrument) -- useful since DXMon and PropMon
   aren't guaranteed to be in the same room.
+- Shows which HamAlert source (Cluster, RBN, PSK Reporter, and others)
+  actually produced each spot, right on the Overview panels.
 - Briefly flashes when a genuinely new spot comes in, so a real hit catches
   your attention even from a glance.
 - Lets you pin priority Needed entities so they stay near the top of the
@@ -38,6 +40,8 @@ glance:
 - All curation (deciding what to track, building HamAlert triggers) happens
   through a web page on your local network -- the device itself is a thin
   display, not where you manage configuration.
+
+![The Overview screen, showing both the Watched and Needed panels with band condition and HamAlert source.](images/dxmon_overview_tab.png)
 
 For the full feature list and how to actually use it day to day, see
 **[User_Guide.md](User_Guide.md)**.

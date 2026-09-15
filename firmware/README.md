@@ -76,6 +76,8 @@ For **first boot only**, you also need:
 DXMon has a real, on-device captive-portal Wi-Fi setup -- no reflashing
 needed to change networks. From the **Config** screen, tap **Wi-Fi Setup**:
 
+![The Wi-Fi Setup screen on the device.](../images/dxmon_config_wifi_setup.png)
+
 1. The device scans for nearby networks, then opens its own temporary Wi-Fi
    network (`WIFI_SETUP_AP_NAME` in `config.h`, default `DXMon-Setup`).
 2. Connect your phone to that network. Most phones will automatically pop

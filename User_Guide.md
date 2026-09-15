@@ -18,12 +18,25 @@ DXMon tracks two kinds of things:
 Everything you curate on the web pages shows up on the physical device,
 updated automatically as real spots come in from HamAlert.
 
+## A quick heads-up: periodic reboots
+
+Every so often (currently about every 15 minutes), the device's screen will
+briefly go blank and reconnect on its own. **This is expected, deliberate
+behavior, not a malfunction.** It's a short, automatic restart that clears a
+known display-rendering quirk before it becomes visible -- the exact cause
+is external to DXMon's own code and hasn't been fully tracked down, so this
+scheduled restart is the permanent fix rather than a temporary workaround.
+Nothing to troubleshoot; if it happens while you're glancing at the screen,
+just give it a few seconds to come back.
+
 ## The device screens
 
 The device has four tabs across the bottom: **Overview**, **Watched**,
 **Needed**, and **Config**.
 
 ### Overview
+
+![The Overview screen, showing both the Watched and Needed panels.](images/dxmon_overview_tab.png)
 
 Two panels side by side. The left panel shows your Watched list; the right
 shows your Needed list. Each panel shows:
@@ -34,6 +47,8 @@ shows your Needed list. Each panel shows:
   condition** for that spot (green/amber/red for good/fair/poor), sourced
   from PropMon. No dot at all means the condition isn't available right
   now -- not a fourth "unknown" state, just no data.
+- Which **HamAlert source** actually produced the spot (Cluster, RBN, PSK
+  Reporter, and others), shown as a short abbreviation.
 - The spotted callsign and a beam heading + distance to it (e.g. "5A1AL --
   62 deg / 9186 km"), so you know which direction to point your antenna.
 - A count of how many other entries you're tracking.
@@ -55,12 +70,16 @@ to drill in further to that callsign's own recent spot history (see
 
 ### Watched (tab)
 
+![The Watched tab, listing every DXpedition you're currently following.](images/dxmon_watched_tab.png)
+
 The full list of everything you're watching, each showing its own status
 (active/upcoming/waiting for a spot), last spot detail, and beam heading.
 Scroll to see everything. **Tap any entry** to see that callsign's own
 recent spot history.
 
 ### Needed (tab)
+
+![The Needed tab, listing entities and slots you're tracking.](images/dxmon_needed_tab.png)
 
 The full list of everything in your curated Needed list. Each entry shows an
 **ENTITY** or **SLOT** badge:
@@ -95,7 +114,17 @@ Two related but distinct drill-down screens, reached a few different ways:
 Both are full-screen views with a back arrow in the top-left corner to
 return to wherever you came from.
 
+| Recent Activity (Watched) | Spot History (from a tapped spot) |
+|---|---|
+| ![Watched Recent Activity feed.](images/dxmon_overview_watched_drill1.png) | ![Spot history for one callsign.](images/dxmon_overview_watched_drill2.png) |
+
+| Recent Activity (Needed) | Spot History (from the Needed tab) |
+|---|---|
+| ![Needed Recent Activity feed.](images/dxmon_overview_needed_drill1.png) | ![Spot history for one entity.](images/dxmon_needed_tab_drill1.png) |
+
 ### Config
+
+![The Config screen, showing connection status and settings.](images/dxmon_config_tab.png)
 
 Shows Wi-Fi connection status and IP address, whether the ADXO and HamAlert
 backend connections are healthy, how many entries you're watching, the URL
@@ -105,6 +134,8 @@ waiting for the next automatic update.
 
 **Wi-Fi Setup** lets you connect DXMon to a different network without
 reflashing the firmware:
+
+![The Wi-Fi Setup screen.](images/dxmon_config_wifi_setup.png)
 
 1. Tap **Wi-Fi Setup**. The device scans nearby networks, then opens its own
    temporary network (`DXMon-Setup` by default).
@@ -129,16 +160,33 @@ it only displays what you've curated here.
 
 ### Browse ADXO (`/`)
 
+![The Browse ADXO curation page.](images/DXMon_Curation_Browse_ADXO.png)
+
 Browse currently-announced DXpeditions and add any you want to follow to
-your Watched list with one click.
+your Watched list with one click. Anything you've already added floats to
+the top of the list, soonest-ending first, so your own watchlist doesn't
+get buried under entries you haven't looked at yet. A DXpedition ending
+within the next 3 days shows a small countdown flag ("Ends in 3 days,"
+"Ends tomorrow," "Ends today") next to the Active Now badge.
 
 ### Watched (`/watched`)
 
-Your curated Watched list. Remove an entry, or use the **Create HamAlert
-trigger** link next to it to get a ready-to-paste trigger recipe for that
-callsign.
+![The Watched curation page.](images/DXMon_Curation_Watched.png)
+
+Your curated Watched list. **Edit** an entry to correct its callsign,
+DXCC entity, or note -- useful when ADXO only gives a DXpedition's base
+prefix (e.g. "9N" for Nepal) but the real on-air callsign is a compound
+form (e.g. "9N/OM0GA"). Enter the full compound form here to match
+HamAlert's own "Full Callsign" condition -- see Best Practices below.
+Remove an entry, or use the **Create HamAlert trigger** link next to it
+to get a ready-to-paste trigger recipe for that callsign. Any entry whose
+DXpedition end date has passed gets a small amber "Ended" flag, which
+stays until you remove the entry yourself -- a deliberate reminder to
+also remove the matching HamAlert trigger.
 
 ### Needed (`/needed`)
+
+![The Needed curation page.](images/DXMon_Curation_Needed.png)
 
 Your curated Needed list. To add an entry:
 
@@ -163,6 +211,8 @@ your pinned entries. Unpin with the filled star (★).
 
 ### Trigger Builder (`/triggers`)
 
+![The Trigger Builder page.](images/DXMon_Curation_Triggers.png)
+
 Generates a ready-to-paste HamAlert trigger recipe for any callsign or DXCC
 entity. HamAlert has no API for creating triggers automatically -- you still
 paste the result into hamalert.org yourself -- but this tool does the
@@ -175,6 +225,8 @@ trip to the Needed page.
 
 ### HamAlert (`/hamalert`)
 
+![The HamAlert recent-spots page.](images/DXMon_Curation_HamAlert.png)
+
 Shows recent real spots HamAlert's own triggers have matched, plus a beam
 headings side panel for every distinct callsign currently in that list.
 Useful for eyeballing what's actually coming through before it shows up on
@@ -182,12 +234,15 @@ the device.
 
 ### Preview (`/preview`)
 
+![The Preview page, mirroring the device's own screens in a browser.](images/DXMon_Curation_Preview.png)
+
 An in-browser rendering of the device's own screens, useful as a quick
 remote check when the physical device isn't nearby. It's meant as a
 good-enough glance, not an exact mirror of every device screen -- the
-band-condition dot and drill-down screens are included; pin/favorite
-badges and the new-spot flash currently are not. Small **?** icons around
-the screens give short explanations on hover (or tap, on a phone/tablet).
+band-condition dot, HamAlert source, and drill-down screens are included;
+pin/favorite badges and the new-spot flash currently are not. Small **?**
+icons around the screens give short explanations on hover (or tap, on a
+phone/tablet).
 
 ## Beam heading
 
@@ -226,6 +281,12 @@ one entry didn't have a usable heading calculated for it.
 - **Use "also add to Needed"** on the Trigger Builder page when building an
   entity-level trigger, to curate and set up the alert in one pass instead
   of two separate trips.
+- **For compound-callsign DXpeditions** (e.g. ADXO shows "9N" for Nepal,
+  but the real on-air callsign is "9N/OM0GA"), use HamAlert's own "Full
+  Callsign" condition when building the trigger, and edit the matching
+  Watched entry to the same full compound form (see the Watched curation
+  page above). DXMon checks a spot's full callsign as well as its plain
+  one, so this is the entire fix -- no other setup needed.
 
 #### Examples from a real setup
 
