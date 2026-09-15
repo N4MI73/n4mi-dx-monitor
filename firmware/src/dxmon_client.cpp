@@ -99,6 +99,10 @@ static void parse_spot_info(SpotInfo &spot, JsonVariant v)
     // copy_field() already treats a null/missing field as empty string,
     // exactly matching "condition unavailable".
     copy_field(spot.band_condition, sizeof(spot.band_condition), v["band_condition"]);
+    // 2026-09-16: HamAlert spot source -- see SpotInfo's own comment. Same
+    // graceful null-as-empty-string handling as every other optional field
+    // here.
+    copy_field(spot.source, sizeof(spot.source), v["source"]);
 
     // Added 2026-09-05: beam is independently nullable (a lookup failure or
     // unknown callsign on the server side returns null, same graceful-degradation
@@ -494,6 +498,7 @@ bool dxmon_fetch_watched(WatchedData &out)
             we.received_at[0] = '\0';
             we.comment[0] = '\0';
             we.band_condition[0] = '\0';
+            we.source[0] = '\0';
         } else {
             we.has_last_spot = true;
             copy_field(we.band, sizeof(we.band), last_spot["band"]);
@@ -503,6 +508,8 @@ bool dxmon_fetch_watched(WatchedData &out)
             copy_field(we.comment, sizeof(we.comment), last_spot["comment"]);
             // 2026-09-12: PropMon band-condition -- see WatchedEntry's own comment.
             copy_field(we.band_condition, sizeof(we.band_condition), last_spot["band_condition"]);
+            // 2026-09-16: HamAlert spot source -- see WatchedEntry's own comment.
+            copy_field(we.source, sizeof(we.source), last_spot["source"]);
         }
 
         // Added 2026-09-06: top-level "beam" field, sibling of "last_spot"

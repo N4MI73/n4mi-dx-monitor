@@ -376,6 +376,19 @@ function bandConditionColor(cond) {
   return null;
 }
 
+// Mirrors main.cpp's own source_label() exactly -- same real evidence
+// behind each mapping (see that function's comment): "cluster"/"rbn"/
+// "pskreporter" are confirmed exact wire-format values (2026-08-24, real
+// production data); "pota"/"wwff"/"sota" are educated guesses at the raw
+// value based on HamAlert's own UI labels, not independently confirmed.
+// Falls through to the raw value itself for anything unrecognized, so an
+// unconfirmed guess degrades gracefully rather than showing nothing.
+function sourceLabel(raw) {
+  if (!raw) return null;
+  const map = { cluster: 'CLUS', rbn: 'RBN', pskreporter: 'PSKR', pota: 'POTA', wwff: 'WWFF', sota: 'SOTA' };
+  return map[raw] || raw;
+}
+
 function renderLabeledStatRow(freqText, modeText, dateText, bandCondition) {
   const modeHtml = modeText
     ? '<span class="device-badge slot" style="margin-right: 0;">' + escapeHtml(modeText.toUpperCase()) + '</span>'
@@ -472,8 +485,15 @@ function renderOverviewWatchedPanel() {
 
   const activeThrough = (e.adxo && e.adxo.end) ? formatShortDate(e.adxo.end) : '--';
   const more = watched.length - 1;
-  const moreHtml = more > 0
-    ? '<div class="device-stat" style="margin-top: 0.4rem;">+' + more + ' more watched</div>'
+  // 2026-09-16: HamAlert spot source, same row as "+N more watched" -- exact
+  // same placement the device firmware uses (reusing existing row space
+  // rather than adding a new one, since this panel has none to spare).
+  const srcAbbr = hasSpot ? sourceLabel(e.last_spot.source) : null;
+  const moreHtml = (more > 0 || srcAbbr)
+    ? '<div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.4rem;">' +
+        (more > 0 ? '<div class="device-stat">+' + more + ' more watched</div>' : '<div></div>') +
+        (srcAbbr ? '<div class="device-stat" style="color: var(--muted);">' + escapeHtml(srcAbbr) + '</div>' : '') +
+      '</div>'
     : '';
 
   // Real device always shows the COMMENT label, even with nothing under it --
@@ -553,6 +573,15 @@ function renderNeededPanel() {
         '<span class="device-callsign" style="font-size: 1rem;">' + escapeHtml(spot.callsign) + '</span> ' +
         formatBeamSuffix(spot.beam) +
       '</div>' +
+      // 2026-09-16: HamAlert spot source -- same abbreviation/placement
+      // logic as the Watched panel. Note: the real device shows this on
+      // the same row as a "+N more tracked" count, which /preview's own
+      // Tier 1 rendering never had to begin with (a separate, pre-existing
+      // gap, not something introduced here) -- shown on its own line
+      // rather than inventing that missing row as part of this change.
+      (sourceLabel(spot.source)
+        ? '<div class="device-stat" style="text-align: right; color: var(--muted); margin-top: 0.3rem;">' + escapeHtml(sourceLabel(spot.source)) + '</div>'
+        : '') +
     '</div>';
   }
 

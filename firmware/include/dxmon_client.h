@@ -29,6 +29,11 @@ struct WatchedEntry {
     // the same physical spot, so a spot's frequency alone doesn't say
     // whether that band is actually any good right now.
     char band_condition[8];
+    // Added 2026-09-16: same HamAlert spot-source field as SpotInfo's own --
+    // see its comment there for the full design. Watched's own struct is
+    // flat (not nested via SpotInfo), so this needs its own copy of the
+    // field rather than inheriting one.
+    char source[16];
     char comment[64];          // operator comment on the spot -- only present on real
                                 // "cluster" source spots (a human typed it); empty on
                                 // automated sources (rbn/pskreporter). Confirmed real
@@ -109,6 +114,13 @@ struct SpotInfo {
     // Overview's Tier 2 doesn't show frequency/band at all today, so there's
     // no natural place to show a band condition there yet either.
     char band_condition[8];
+    // Added 2026-09-16: HamAlert's own spot source (Cluster/RBN/PSKReporter/
+    // POTA/WWFF/SOTAwatch), shown on the Overview panels only (Dan's own
+    // explicit scope -- not the tabs, not the drill-downs). Sized for the
+    // longest real value seen so far ("pskreporter", confirmed live data)
+    // plus headroom. Server passes this through untouched; firmware maps it
+    // to a short display label -- see source_label() in main.cpp.
+    char source[16];
     // Added 2026-09-05: beam heading to the spotted callsign, for Needed hits only
     // (Watched already shows its own callsign prominently as the entry itself, so
     // this wasn't requested there). Mirrors /api/dxmon/needed's own "beam" field,

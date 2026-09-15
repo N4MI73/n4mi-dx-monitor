@@ -182,6 +182,27 @@ static void update_band_dot(lv_obj_t *dot, lv_obj_t *anchor_label, const char *c
     lv_obj_align_to(dot, anchor_label, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
 }
 
+/** Maps HamAlert's own spot source to a short display abbreviation --
+ * 2026-09-16, real space constraint. "cluster"/"rbn"/"pskreporter" are
+ * confirmed exact wire-format values (2026-08-24, live production data,
+ * see dxmon_client.h's own comment). "pota"/"wwff"/"sota" are educated
+ * guesses at the raw value based on HamAlert's own UI labels (Dan's
+ * screenshot, 2026-09-14) -- NOT independently confirmed the way the first
+ * three are. Falls through to showing the raw value as-is for anything
+ * unrecognized, so an unconfirmed guess degrades gracefully (a slightly
+ * odd-looking but honest label) rather than silently showing nothing. */
+static const char *source_label(const char *raw)
+{
+    if (!raw || raw[0] == '\0') return nullptr;
+    if (strcmp(raw, "cluster") == 0) return "CLUS";
+    if (strcmp(raw, "rbn") == 0) return "RBN";
+    if (strcmp(raw, "pskreporter") == 0) return "PSKR";
+    if (strcmp(raw, "pota") == 0) return "POTA";
+    if (strcmp(raw, "wwff") == 0) return "WWFF";
+    if (strcmp(raw, "sota") == 0) return "SOTA";
+    return raw;
+}
+
 /** Formats just "N deg / N mi" (empty string if no beam data) -- added
  * 2026-09-06 so the callsign and its beam heading can be shown as two
  * separately-styled labels (callsign made bold/bright/larger per Dan's
@@ -398,6 +419,12 @@ struct OverviewWidgets {
     lv_obj_t *watched_active_through;
     lv_obj_t *watched_badge;
     lv_obj_t *watched_badge_lbl;
+    // 2026-09-16: HamAlert spot source -- placed on the same row as
+    // watched_badge (the "+N more watched" pill), right-aligned in the
+    // open space to its right. Reuses existing row space rather than
+    // needing new vertical room, which this panel has none of to spare
+    // (confirmed by checking real coordinates before committing to this).
+    lv_obj_t *watched_source;
 };
 static OverviewWidgets ov;
 
@@ -438,6 +465,9 @@ struct NeededWidgets {
     lv_obj_t *t1_spotted_beam;
     lv_obj_t *t1_more_badge;
     lv_obj_t *t1_more_lbl;
+    // 2026-09-16: same HamAlert spot-source placement technique as the
+    // Watched panel's own watched_source -- see its comment for the reasoning.
+    lv_obj_t *t1_source;
 
     lv_obj_t *t2_group;
     lv_obj_t *t2_entity;
@@ -679,6 +709,14 @@ static lv_obj_t *make_screen_overview(void)
     ov.watched_badge_lbl = lv_obj_get_child(ov.watched_badge, 0);
     lv_obj_add_flag(ov.watched_badge, LV_OBJ_FLAG_HIDDEN);
 
+    // 2026-09-16: HamAlert spot source -- same row as watched_badge (the
+    // "+N more watched" pill, x=20-170), positioned in the open space to
+    // its right rather than adding a new row this panel has no vertical
+    // room for. Real numbers checked first: panel is 378 wide, badge ends
+    // at x=170, so there's ~180px of clear space here even with the badge
+    // visible at the same time.
+    ov.watched_source = make_label(watched, "", &lv_font_montserrat_14, COLOR_TEXT_MUTED, 300, 283);
+
     // Real bug found and fixed 2026-09-06: the panel-level click handler added
     // above never fired on real hardware. LVGL's lv_obj_create() widgets are
     // CLICKABLE BY DEFAULT -- this panel is packed with child containers
@@ -804,6 +842,10 @@ static lv_obj_t *make_screen_overview(void)
     nw.t1_more_lbl = lv_obj_get_child(nw.t1_more_badge, 0);
     lv_obj_add_flag(nw.t1_more_badge, LV_OBJ_FLAG_HIDDEN);
 
+    // 2026-09-16: HamAlert spot source -- same technique/reasoning as the
+    // Watched panel's own watched_source, same row as t1_more_badge.
+    nw.t1_source = make_label(nw.t1_group, "", &lv_font_montserrat_14, COLOR_TEXT_MUTED, 300, 259);
+
     // Real bug found and fixed 2026-09-03: t1_group was never hidden by default, so
     // before the first successful fetch it showed raw, un-set-up LVGL default widget
     // content (literally the word "Text", "--" everywhere) -- confirmed directly from
@@ -897,6 +939,7 @@ static void update_overview_watched(const WatchedData &data)
         lv_label_set_text(ov.watched_comment, "");
         lv_label_set_text(ov.watched_active_through, "--");
         lv_obj_add_flag(ov.watched_badge, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(ov.watched_source, "");
         reposition_status_indicator(ov.watched_status_lbl, ov.watched_status_dot);
         return;
     }
@@ -947,6 +990,10 @@ static void update_overview_watched(const WatchedData &data)
         format_short_datetime(e.received_at, when_buf, sizeof(when_buf));
         lv_label_set_text(ov.watched_last_spot, when_buf);
 
+        // 2026-09-16: HamAlert spot source -- see watched_source's own comment.
+        const char *src = source_label(e.source);
+        lv_label_set_text(ov.watched_source, src ? src : "");
+
         if (e.comment[0] != '\0') {
             char comment_buf[80];
             snprintf(comment_buf, sizeof(comment_buf), "\"%s\"", e.comment);
@@ -960,6 +1007,7 @@ static void update_overview_watched(const WatchedData &data)
         lv_label_set_text(ov.watched_mode_lbl, "--");
         lv_label_set_text(ov.watched_last_spot, "Not yet spotted");
         lv_label_set_text(ov.watched_comment, "");
+        lv_label_set_text(ov.watched_source, "");
     }
 
     // 2026-09-12: new-spot flash detection -- see FlashState comment near the
@@ -1126,6 +1174,10 @@ static void update_overview_needed(const NeededData &data)
         char when_buf[24];
         format_short_datetime(t.last_spot.received_at, when_buf, sizeof(when_buf));
         lv_label_set_text(nw.t1_when, when_buf);
+
+        // 2026-09-16: HamAlert spot source -- see t1_source's own comment.
+        const char *t1_src = source_label(t.last_spot.source);
+        lv_label_set_text(nw.t1_source, t1_src ? t1_src : "");
 
         // 2026-09-06: callsign and beam heading set as two separate labels now
         // (see the NeededWidgets struct comment) -- shadow and main callsign
