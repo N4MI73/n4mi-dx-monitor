@@ -4,6 +4,19 @@ This guide covers what DXMon does and how to use it, once both the
 [server](server/README.md) and [firmware](firmware/README.md) are set up and
 running. It doesn't cover installation -- see those two READMEs for that.
 
+## Contents
+
+- [The big picture](#the-big-picture)
+- [A quick heads-up: periodic reboots](#a-quick-heads-up-periodic-reboots)
+- [The device screens](#the-device-screens)
+- [Drilling into detail](#drilling-into-detail)
+- [Curating your lists (web pages)](#curating-your-lists-web-pages)
+- [Beam heading](#beam-heading)
+- [Best Practices](#best-practices)
+  - [How DXMon and HamAlert work together](#how-dxmon-and-hamalert-work-together)
+  - [Organizing your HamAlert triggers with comments](#organizing-your-hamalert-triggers-with-comments)
+  - [Troubleshooting](#troubleshooting)
+
 ## The big picture
 
 DXMon tracks two kinds of things:
@@ -22,12 +35,14 @@ updated automatically as real spots come in from HamAlert.
 
 Every so often (currently about every 15 minutes), the device's screen will
 briefly go blank and reconnect on its own. **This is expected, deliberate
-behavior, not a malfunction.** It's a short, automatic restart that clears a
-known display-rendering quirk before it becomes visible -- the exact cause
-is external to DXMon's own code and hasn't been fully tracked down, so this
-scheduled restart is the permanent fix rather than a temporary workaround.
-Nothing to troubleshoot; if it happens while you're glancing at the screen,
-just give it a few seconds to come back.
+behavior, not a malfunction.** The underlying display-stack cause hasn't
+been fully tracked down -- a scheduled restart is the accepted mitigation
+that prevents it from becoming visually distracting, not a claim that the
+root cause itself has been found or fixed. Nothing is lost, and the device
+returns after a few seconds. Nothing to troubleshoot if it stays within
+this pattern; if the blank period is much longer than a few seconds, or
+starts happening well before the next scheduled interval, that's worth
+mentioning if you're in touch with the project.
 
 ## The device screens
 
@@ -50,7 +65,10 @@ shows your Needed list. Each panel shows:
 - Which **HamAlert source** actually produced the spot (Cluster, RBN, PSK
   Reporter, and others), shown as a short abbreviation.
 - The spotted callsign and a beam heading + distance to it (e.g. "5A1AL --
-  62 deg / 9186 km"), so you know which direction to point your antenna.
+  62 deg / 5708 mi"), so you know which direction to point your antenna.
+  Treat the heading and distance as practical antenna-pointing estimates,
+  not precise station coordinates -- they're computed from callsign/prefix
+  reference data, not your correspondent's exact location.
 - A count of how many other entries you're tracking.
 
 If nothing's currently active, the panel falls back to showing the last real
@@ -116,11 +134,11 @@ return to wherever you came from.
 
 | Recent Activity (Watched) | Spot History (from a tapped spot) |
 |---|---|
-| ![Watched Recent Activity feed.](images/dxmon_overview_watched_drill1.png) | ![Spot history for one callsign.](images/dxmon_overview_watched_drill2.png) |
+| [![Watched Recent Activity feed, listing every real spot across everything you're watching.](images/dxmon_overview_watched_drill1.png)](images/dxmon_overview_watched_drill1.png) | [![Single-callsign spot history reached by tapping a spot in that feed.](images/dxmon_overview_watched_drill2.png)](images/dxmon_overview_watched_drill2.png) |
 
 | Recent Activity (Needed) | Spot History (from the Needed tab) |
 |---|---|
-| ![Needed Recent Activity feed.](images/dxmon_overview_needed_drill1.png) | ![Spot history for one entity.](images/dxmon_needed_tab_drill1.png) |
+| [![Needed Recent Activity feed, listing every real spot across everything you're tracking.](images/dxmon_overview_needed_drill1.png)](images/dxmon_overview_needed_drill1.png) | [![Single-entity spot history reached from a Needed tab roster row, spanning every callsign that's worked it.](images/dxmon_needed_tab_drill1.png)](images/dxmon_needed_tab_drill1.png) |
 
 ### Config
 
@@ -159,6 +177,12 @@ All curation happens on the web pages served by the backend --
 it only displays what you've curated here.
 
 ### Browse ADXO (`/`)
+
+> ⚠️ **If you're running your own DXMon instance** (not N4MI's), make sure
+> you've secured your own permission from NG3K before this page shows you
+> anything -- see `README.md`'s own "Data sources" section for the full
+> notice. Permission is per-installation, not automatically inherited from
+> this codebase's own history of use.
 
 ![The Browse ADXO curation page.](images/DXMon_Curation_Browse_ADXO.png)
 
@@ -232,6 +256,12 @@ headings side panel for every distinct callsign currently in that list.
 Useful for eyeballing what's actually coming through before it shows up on
 the device.
 
+**Pausing HamAlert** (e.g. before a trip) is currently a command-line
+action, not a button on this page -- see `server/README.md`'s own
+"Pausing HamAlert" section for the exact commands. It's a real, persisted
+pause: once disabled, it stays disabled even through a container or NAS
+restart, rather than silently reconnecting while you're away.
+
 ### Preview (`/preview`)
 
 ![The Preview page, mirroring the device's own screens in a browser.](images/DXMon_Curation_Preview.png)
@@ -255,6 +285,32 @@ one entry didn't have a usable heading calculated for it.
 
 ## Best Practices
 
+### How DXMon and HamAlert work together
+
+DXMon uses HamAlert to receive spots, but HamAlert triggers and DXMon's
+curated lists (`/watched`, `/needed`) are maintained completely separately.
+Creating or changing one does not automatically update the other. For a
+spot to actually appear as activity on the device, **two matching things
+have to exist at once**:
+
+1. A working HamAlert trigger that delivers the spot via the Telnet
+   destination.
+2. A corresponding entry in DXMon's own `/watched` or `/needed`.
+
+Two real failure modes follow directly from this:
+
+- **A curated DXMon entry with no matching HamAlert trigger** will sit in
+  the roster forever, never showing activity, even if real spots for it
+  exist elsewhere.
+- **A HamAlert trigger with no matching DXMon entry** may still deliver
+  spots to the backend, but they won't appear as Watched or Needed activity
+  on the device -- just unnecessary spot traffic, potentially contributing
+  toward HamAlert's own daily trigger limit for nothing.
+
+The goal is a one-to-one relationship: every useful HamAlert trigger has a
+real purpose in DXMon, and every curated DXMon target has a HamAlert
+trigger actually behind it.
+
 ### Building good HamAlert triggers
 
 - **Use the Trigger Builder (`/triggers`)** rather than hand-building
@@ -270,14 +326,10 @@ one entry didn't have a usable heading calculated for it.
   correctly-firing HamAlert trigger never shows up as a hit on DXMon.
 - **When curating a SLOT** (a specific band/mode gap), check the same
   bands and modes in DXMon that you set as conditions in the real HamAlert
-  trigger. DXMon's checkboxes deliberately mirror HamAlert's own
-  trigger-condition options for exactly this reason -- if a mode isn't one
-  of the four checkboxes offered, HamAlert can't actually trigger on it for
-  this kind of entry either.
-- **Curating an entry doesn't create a HamAlert trigger by itself.** A
-  Needed or Watched entry with no real HamAlert trigger behind it will
-  never show activity, even if genuine spots for it exist elsewhere.
-  Curation and trigger-building are two separate, deliberate steps.
+  trigger. DXMon offers the four modes supported by its current Needed/SLOT
+  workflow (CW, SSB, FT4, FT8) -- select the same modes on both sides, or a
+  real spot in a mode DXMon doesn't offer a checkbox for will never be
+  classified as a match here, even if HamAlert itself matched it.
 - **Use "also add to Needed"** on the Trigger Builder page when building an
   entity-level trigger, to curate and set up the alert in one pass instead
   of two separate trips.
@@ -287,30 +339,117 @@ one entry didn't have a usable heading calculated for it.
   Watched entry to the same full compound form (see the Watched curation
   page above). DXMon checks a spot's full callsign as well as its plain
   one, so this is the entire fix -- no other setup needed.
+- **Manual trigger entry is a real, deliberate checkpoint, not a
+  limitation.** DXMon has no API to create HamAlert triggers automatically
+  -- you always paste the generated recipe into hamalert.org yourself.
+  That manual step is a genuine chance to double-check the callsign or
+  entity, full-vs-base callsign form, bands, modes, spot source, Spotter
+  Continent, the Telnet destination, and your own comment, before a
+  trigger starts consuming spot volume.
+
+#### Spotter Continent
+
+A Spotter Continent condition can substantially cut duplicate or
+irrelevant spot volume, and helps keep a busy trigger under HamAlert's own
+daily limit. N4MI's own real examples below use `North America` -- that's
+this station's own choice, not a required value. Pick whatever continent
+or region actually matches your own location and goals. The real tradeoff:
+this filter excludes reports from outside the continent you pick, so
+you're trading away some early/distant reports for less noise -- worth
+understanding before you set it, not just copying N4MI's own choice.
 
 #### Examples from a real setup
 
-The three trigger shapes in practice, all with a **Spotter Continent**
-filter (North America) added -- this keeps busy callsigns and entities well
-under HamAlert's own daily spot-volume limit, per the same real fix
-already applied elsewhere in this project's own trigger history.
+The three trigger shapes in practice, all with N4MI's own Spotter
+Continent choice (`North America`) added:
 
 **Watched callsign trigger** -- callsign, band, and mode conditions, one
 per DXpedition you're following:
 
-![HamAlert trigger example for a Watched callsign](images/hamalert_watched_trigger.png)
+[![HamAlert trigger conditions for a watched DXpedition callsign](images/hamalert_watched_trigger.png)](images/hamalert_watched_trigger.png)
 
 **Needed whole-entity trigger** -- DXCC condition only, no band/mode
 restriction, since these are ENTITY-kind Needed targets (any band, any
 mode counts):
 
-![HamAlert trigger example for a Needed whole entity](images/hamalert_needed_entity_trigger.png)
+[![HamAlert trigger conditions for a needed whole DXCC entity](images/hamalert_needed_entity_trigger.png)](images/hamalert_needed_entity_trigger.png)
 
 **Needed band-slot trigger** -- DXCC, band, and mode conditions together,
 matching exactly the bands/modes checked on DXMon's own Needed curation
 page for that SLOT-kind entry:
 
-![HamAlert trigger example for a Needed band/mode slot](images/hamalert_needed_bands_trigger.png)
+[![HamAlert trigger conditions for a needed band/mode slot](images/hamalert_needed_bands_trigger.png)](images/hamalert_needed_bands_trigger.png)
+
+### Organizing your HamAlert triggers with comments
+
+HamAlert comments are optional, and **DXMon never parses them** -- they're
+a purely human-facing organizational aid, not a source of truth for
+anything DXMon does. Still, a consistent comment makes it much easier to
+compare your HamAlert trigger list against DXMon's own curated lists and
+spot anything missing, obsolete, or mismatched.
+
+N4MI's own convention uses three prefixes:
+
+| Prefix | Purpose | Matching DXMon list |
+|---|---|---|
+| `WATCHED` | A specific DXpedition callsign | `/watched` |
+| `NEEDED` | A whole needed DXCC entity | `/needed` as an **ENTITY** |
+| `BAND` | Specific needed bands/modes on an already-confirmed entity | `/needed` as a **SLOT** |
+
+```text
+WATCHED: Guyana 40m, 20m, 15m, 12m, 10m (ends 2026-09-11)
+WATCHED: Nepal (ends 2026-09-19)
+NEEDED: Glorioso Is.
+BAND: Singapore 17m, 15m FT8
+```
+
+A `NEEDED` comment with just the entity name means the whole entity
+counts, any band or mode. For a `BAND` trigger, spelling out the bands and
+modes in the comment makes the trigger's purpose obvious at a glance, even
+though the same information is already visible in HamAlert's own
+conditions. For a temporary Watched DXpedition, an end date in
+unambiguous `YYYY-MM-DD` form is a useful cleanup reminder -- HamAlert
+itself doesn't expire a trigger automatically, but this can be compared
+directly against DXMon's own Ended flag when it appears.
+
+**Note the distinction:** `BAND` here is N4MI's own comment label, a
+convention for organizing the HamAlert trigger list -- it isn't the same
+thing as DXMon's own **SLOT** badge, which is what the device and curation
+pages actually call this same kind of entry. This naming convention is a
+recommended practice, not a DXMon requirement -- use whatever labels
+reliably keep your own triggers and curated entries aligned in your head.
+
+### Watched, Needed, and Needed-slot workflows
+
+The same real steps, once per target, rather than improvising each time:
+
+**Watched** (a specific DXpedition callsign):
+1. Select it from Browse ADXO, or add it directly on `/watched`.
+2. Confirm the real on-air callsign -- edit it if ADXO only gave a base
+   prefix (see "Building good HamAlert triggers" above).
+3. Generate the trigger recipe from the Trigger Builder, then enter and
+   review it manually in HamAlert, with your own Spotter Continent choice.
+4. Add an organizational comment and the operation's end date, if known.
+5. Confirm real spots reach `/hamalert` and then the device.
+6. When the operation ends: check the Ended reminder on `/watched`, then
+   remove or disable the HamAlert trigger *and* remove the Watched entry.
+
+**Needed, whole entity:**
+1. Copy the entity name exactly from HamAlert's own DXCC condition picker.
+2. Add it to `/needed` with no band/mode restriction.
+3. Generate and enter the trigger, optionally checking "also add to
+   Needed" to do steps 1-2 and this step together.
+4. Confirm the trigger and the DXMon entry use the identical entity name.
+5. Remove both once the entity is confirmed and no longer needed.
+
+**Needed, specific band/mode SLOT:**
+1. Copy the entity name exactly from HamAlert's own DXCC condition picker.
+2. Add the entity to `/needed`, checking only the bands/modes you still
+   need.
+3. Build the HamAlert trigger with the identical DXCC, band, and mode
+   conditions -- a mismatch here means a real spot HamAlert catches can
+   still be silently ignored by DXMon.
+4. Revise or remove both sides as individual bands/modes get satisfied.
 
 ### Keeping your Needed list useful
 
@@ -325,4 +464,28 @@ page for that SLOT-kind entry:
   live hit, pin priority, then alphabetical), not the order you added
   things -- don't rely on list position to remember what you entered when.
 
-*(This section is a first pass -- more topics to come as they come up.)*
+### Periodic alignment check
+
+Worth comparing your HamAlert trigger list against `/watched` and
+`/needed` whenever:
+
+- A Watched operation reaches its announced end date, or DXMon shows its
+  Ended reminder.
+- A Needed entry picks up the 30-day review flag.
+- A needed entity or band/mode slot gets confirmed.
+- A DXpedition changes its callsign, schedule, bands, or modes.
+- HamAlert shows a matching spot that never shows up on the device.
+- A curated DXMon entry stays quiet despite known real on-air activity.
+
+### Troubleshooting
+
+| Symptom | First things to check |
+|---|---|
+| A curated target never shows activity | Confirm a matching HamAlert trigger exists, is enabled, and uses the Telnet destination |
+| HamAlert shows a spot but DXMon doesn't classify it | Confirm the matching `/watched` or `/needed` entry exists; check entity spelling, full-callsign form, bands, and modes |
+| A compound DXpedition callsign never matches | Use HamAlert's Full Callsign condition, and edit the Watched entry to the same complete form |
+| Unexpected or heavy spot traffic | Review obsolete triggers, overly broad conditions, and your Spotter Continent filter |
+| Every beam heading is blank at once | Server-side issue, not a per-callsign one -- see `server/README.md`'s own beam-heading note |
+| No band-condition dot showing | PropMon unreachable, or no current rating for that band -- not a fourth "unknown" state |
+| Brief blank screen roughly every 15 minutes | Expected scheduled-reboot mitigation -- see "A quick heads-up" near the top of this guide |
+| Device can't reach the server after Wi-Fi Setup | Confirm the device and server ended up on the same network, and that the server address is correct |

@@ -17,6 +17,16 @@ glance:
 - **[APRSMon](https://github.com/N4MI73/n4mi-aprs-monitor)** -- "What's happening around me?" (local weather + APRS activity)
 - **DXMon** (this repo) -- "Is a DX station I care about active right now, and where should I listen?"
 
+> ### ⚠️ Before you deploy this: ADXO permission is per-installation, not per-repository
+>
+> DXMon can optionally retrieve schedule data from NG3K's Announced DX
+> Operations (ADXO) page. **The permission covering this was granted to
+> N4MI for the author's own personal installation specifically -- it does
+> not extend to your installation just because you're running the same
+> code.** If you're standing up your own DXMon instance, **you must contact
+> Bill Feidt/NG3K yourself and get your own permission before enabling ADXO
+> retrieval.** See "Data sources" below for the full detail.
+
 ## What it does, briefly
 
 - Tracks a curated list of **Watched** DXpedition callsigns and **Needed**
@@ -64,13 +74,22 @@ else in the shack.
   browsing and selecting what to watch, and for "starts in N days" data on
   upcoming DXpeditions.
 
-  > **ADXO permission:** DXMon can retrieve announced-operation information
-  > from NG3K's ADXO text page. Permission granted to N4MI applies to the
-  > project author's personal installation and should not be assumed to
-  > cover other installations. Before enabling ADXO retrieval, contact the
-  > ADXO owner and request permission for your instance. DXMon limits
-  > retrieval to once daily and caches the last successful result to
-  > minimize load.
+  > **ADXO permission, in full:** DXMon can retrieve announced-operation
+  > information from NG3K's ADXO text page. **This permission was granted
+  > to N4MI specifically, for the author's own personal installation --
+  > it does not transfer to any other installation of this software,
+  > including yours, even though the code is the same.**
+  >
+  > **If you are building your own instance of DXMon: contact Bill
+  > Feidt/NG3K directly and obtain your own permission before using ADXO
+  > retrieval.** Don't rely on this repository's own history of use as
+  > implicit permission for your own deployment.
+  >
+  > Once permission is granted, DXMon limits retrieval to once daily and
+  > caches the last successful result, to keep load on NG3K's server to a
+  > minimum. DXMon does not redistribute, republish, or otherwise expose
+  > retrieved ADXO data to anyone beyond the operator of that specific
+  > installation.
 
 - **[HamAlert](https://hamalert.org/)** -- real-time spot matching. This is
   the actual alerting path; DXMon's core function doesn't depend on ADXO's
@@ -111,6 +130,8 @@ go check it out directly if you're not already using it.
 
 ## License
 
-Not yet decided. This project will be freely available and open for anyone to
-build their own instrument, matching the rest of the N4MI Desktop Instrument
-Series.
+[MIT](LICENSE) -- freely available and open for anyone to build their own
+instrument, matching the rest of the N4MI Desktop Instrument Series.
+
+The software license is separate from ADXO data access, which requires its
+own per-installation permission -- see "Data sources" above.
