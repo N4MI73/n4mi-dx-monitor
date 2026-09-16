@@ -105,6 +105,9 @@ DXpedition schedule data courtesy of Bill Feidt/NG3K's
 long-running resource for the ham radio community -- go check it out
 directly if you're not already using it.
 
+## Blog Post
+I added a post about DXMon to my n4mi.tech blog: [DX Monitor: A Desk Instrument for Chasing DX](https://n4mi.tech/dx-monitor-a-desk-instrument-for-chasing-dx/)
+
 ## License
 
 [MIT](LICENSE) -- freely available and open for anyone to build their own
