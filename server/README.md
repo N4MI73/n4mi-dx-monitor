@@ -4,27 +4,10 @@ Backend for DXMon: ADXO ingestion, the web curation UI, a real-time HamAlert
 Telnet listener, the Trigger Builder, beam heading calculations, and the
 `/api/dxmon/*` endpoints the firmware consumes.
 
-> ### ⚠️ ADXO permission is per-installation, not per-repository
->
-> DXMon can retrieve announced-operation information from NG3K's ADXO text
-> page. **This permission was granted to N4MI specifically, for the
-> author's own personal installation -- it does not transfer to your
-> installation just because you're running the same code.** If you're
-> deploying your own instance, **contact Bill Feidt/NG3K directly and
-> obtain your own permission before using ADXO retrieval.** Don't rely on
-> this repository's own history of use as implicit permission for your own
-> deployment.
->
-> Once permission is granted, DXMon limits retrieval to once daily and
-> caches the last successful result, to keep load on NG3K's server to a
-> minimum. DXMon does not redistribute, republish, or otherwise expose
-> retrieved ADXO data to anyone beyond the operator of that specific
-> installation.
->
-> **Technical note:** `dxmon-adxo` currently begins polling ADXO
-> immediately on container start -- there is no separate code-level
-> opt-in toggle to enable it after the fact. **Secure your own permission
-> before you deploy this stack**, not after.
+> **ADXO data** is courtesy of Bill Feidt/NG3K. `dxmon-adxo` polls it once
+> daily and caches the result -- see `README.md`'s own "Data sources"
+> section for the full note. No separate setup step needed for this beyond
+> the environment variables below.
 
 > This README assumes you're comfortable running a Portainer stack. It
 > doesn't walk through Docker or Portainer basics from zero.

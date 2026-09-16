@@ -33,7 +33,7 @@ updated automatically as real spots come in from HamAlert.
 
 ## A quick heads-up: periodic reboots
 
-Every so often (currently about every 15 minutes), the device's screen will
+Every so often (currently about every 12 minutes), the device's screen will
 briefly go blank and reconnect on its own. **This is expected, deliberate
 behavior, not a malfunction.** The underlying display-stack cause hasn't
 been fully tracked down -- a scheduled restart is the accepted mitigation
@@ -177,12 +177,6 @@ All curation happens on the web pages served by the backend --
 it only displays what you've curated here.
 
 ### Browse ADXO (`/`)
-
-> ⚠️ **If you're running your own DXMon instance** (not N4MI's), make sure
-> you've secured your own permission from NG3K before this page shows you
-> anything -- see `README.md`'s own "Data sources" section for the full
-> notice. Permission is per-installation, not automatically inherited from
-> this codebase's own history of use.
 
 ![The Browse ADXO curation page.](images/DXMon_Curation_Browse_ADXO.png)
 

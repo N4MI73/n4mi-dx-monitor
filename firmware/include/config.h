@@ -40,9 +40,13 @@
 // 21-minute onset was observed) -> 15 min (2026-09-05 afternoon, after a real, clearly
 // visible slip appeared within 22 minutes even at the 25-minute setting -- confirmed via
 // photo: reboot at 13:43, substantial creep visible by 14:05, next scheduled reboot at
-// 14:08 cleared it). 25 minutes still isn't reliably ahead of the glitch's real onset
-// timing; tightening further to keep the visible window as small as possible.
-#define SCHEDULED_REBOOT_INTERVAL_MS  (15UL * 60UL * 1000UL)
+// 14:08 cleared it) -> 12 min (2026-09-15, after real daily-driver use showed the glitch
+// starting to become visible before the 15-minute reboot could catch it -- Dan's own
+// real-world report, no confirmed correlation with any specific feature despite watching
+// for one). Dan's own expectation, stated going in: this should help "for the most part,"
+// not guarantee it never becomes visible -- an occasional earlier onset is accepted, not
+// treated as a sign 12 min is wrong.
+#define SCHEDULED_REBOOT_INTERVAL_MS  (12UL * 60UL * 1000UL)
 
 #define MAX_WATCHED_ENTRIES  10
 // Unified Needed/Wanted redesign, 2026-09-04: /api/dxmon/needed now serves only
