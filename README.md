@@ -46,7 +46,7 @@ glance:
 
 ![The Overview screen, showing both the Watched and Needed panels with band condition and HamAlert source.](images/dxmon_overview_tab.png)
 
-![DXMon Live, the full-size web view, showing every Watched and Needed entry at once.](images/dxmon_live.png)
+![DXMon Live, the full-size web view, showing every Watched and Needed entry at once.](images/dxmon_live_desktop.png)
 
 For the full feature list and how to actually use it day to day, see
 **[User_Guide.md](User_Guide.md)**.

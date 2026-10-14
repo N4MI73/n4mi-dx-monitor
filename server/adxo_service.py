@@ -1745,6 +1745,15 @@ SPOT_HISTORY_MAX = 10
 # won't grow the file unboundedly within that same 24-hour window either.
 SPOT_HISTORY_MAX_AGE_HOURS = 24
 
+# Background spot recorder (2026-10-14, Dan approved). last_seen.json and
+# spot_history.json used to be written only as a side effect of something
+# polling /api/dxmon/watched or /api/dxmon/needed (the device, ~every 60 s) --
+# so a server with no device running lost any spot that aged out of HamAlert's
+# 100-spot buffer before a DXMon Live page was opened. This interval runs the
+# same two builders in the background instead. 0 turns it off. Both stores
+# dedupe on received_at, so overlapping with device polls is harmless.
+SPOT_RECORDER_INTERVAL_SECONDS = int(os.environ.get("SPOT_RECORDER_INTERVAL_SECONDS", "60"))
+
 _spot_history_lock = threading.Lock()
 _spot_history = {}  # key -> list of spot-info dicts, newest first, capped at SPOT_HISTORY_MAX
 
@@ -1808,8 +1817,17 @@ def _record_spot_history(key, spot_info):
 
 
 def _get_spot_history(key):
+    """Returns this key's history, newest first, limited to the last
+    SPOT_HISTORY_MAX_AGE_HOURS. Real fix (2026-10-14, Dan approved): pruning in
+    _record_spot_history() only runs when a NEW spot arrives for that same key,
+    so an entry that went quiet kept its old spots indefinitely -- the device
+    drill-downs and DXMon Live showed spots up to 35 days old under "last 24
+    hours". Filtering here, at read time, makes every reader honour the 24 h
+    rule. The file on disk still only shrinks at the next write for that key,
+    which is harmless (at most SPOT_HISTORY_MAX entries per key)."""
+    cutoff_iso = (datetime.now(EASTERN) - timedelta(hours=SPOT_HISTORY_MAX_AGE_HOURS)).isoformat()
     with _spot_history_lock:
-        return list(_spot_history.get(key, []))
+        return [s for s in _spot_history.get(key, []) if (s.get("received_at") or "") >= cutoff_iso]
 
 
 def _needed_sort_tier(item):
@@ -2140,15 +2158,6 @@ def api_dxmon_live():
         if sid and sid in adxo_by_id:
             qsl_by_call[(w.get("callsign") or "").strip().upper()] = adxo_by_id[sid].get("qsl", "")
 
-    # Stored history is only pruned to SPOT_HISTORY_MAX_AGE_HOURS when a NEW
-    # spot is recorded for that same key, so an entry that has gone quiet keeps
-    # its old spots on disk (found 2026-10-14: entries showing 31-day-old spots).
-    # Filter at read time here so DXMon Live only ever shows the 24 h window.
-    cutoff_iso = (datetime.now(EASTERN) - timedelta(hours=SPOT_HISTORY_MAX_AGE_HOURS)).isoformat()
-
-    def recent(history):
-        return [s for s in history if (s.get("received_at") or "") >= cutoff_iso]
-
     beam_cache = {}
 
     def beam_for(callsign):
@@ -2160,13 +2169,13 @@ def api_dxmon_live():
     watched_out = []
     for item in watched:
         call = (item["callsign"] or "").strip()
-        history = recent(_get_spot_history("callsign:" + call.lower()))
+        history = _get_spot_history("callsign:" + call.lower())
         watched_out.append(dict(item, qsl=qsl_by_call.get(call.upper(), ""), history=history))
 
     needed_out = []
     for item in needed:
         history = [dict(s, beam=beam_for(s.get("callsign")))
-                   for s in recent(_get_spot_history("needed:" + item["id"]))]
+                   for s in _get_spot_history("needed:" + item["id"])]
         needed_out.append(dict(item, history=history))
 
     hamalert_status, hamalert_err = _hamalert_get("/api/hamalert/status")
@@ -2614,6 +2623,20 @@ def page_triggers_generate():
     )
 
 
+def _spot_recorder_loop():
+    """Calls the same builders a device poll calls, purely for their side effect
+    of recording new spots into last_seen and spot_history. Never raises -- a
+    failed pass (e.g. HamAlert listener down) is logged and retried next interval."""
+    log.info("Background spot recorder running every %d s", SPOT_RECORDER_INTERVAL_SECONDS)
+    while True:
+        time.sleep(SPOT_RECORDER_INTERVAL_SECONDS)
+        try:
+            _build_dxmon_watched()
+            _build_dxmon_needed()
+        except Exception as exc:  # noqa: BLE001 -- keep the loop alive no matter what
+            log.warning("Background spot recorder pass failed: %s", exc)
+
+
 if __name__ == "__main__":
     _load_watched()
     _load_no_confirms()
@@ -2622,4 +2645,6 @@ if __name__ == "__main__":
     _load_spot_history()
     t = threading.Thread(target=_scheduler_loop, daemon=True)
     t.start()
+    if SPOT_RECORDER_INTERVAL_SECONDS > 0:
+        threading.Thread(target=_spot_recorder_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=LISTEN_PORT, threaded=True)

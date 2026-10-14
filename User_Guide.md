@@ -279,7 +279,7 @@ tablet. It runs on the same server as the curation pages, so it works with
 or without the physical device -- useful if you'd rather not build one, or
 want to check DXMon from another room.
 
-![DXMon Live on a desktop: every Watched and Needed entry at once, each with its latest spot and a 24-hour activity strip.](images/dxmon_live.png)
+![DXMon Live on a desktop: every Watched and Needed entry at once, each with its latest spot and a 24-hour activity strip.](images/dxmon_live_desktop.png)
 
 - **Every Watched and Needed entry at once**, in the same order the device
   uses (live hits first; pinned Needed entries next). Two columns side by
@@ -307,10 +307,9 @@ want to check DXMon from another room.
   the last good data stays on screen and the status bar says so.
 
 History is the same store the device's drill-down screens use: up to the
-last 10 spots per entry, kept for 24 hours. New spots are recorded whenever
-the device or an open DXMon Live page polls the server, so with no device
-running, spots that arrive while no DXMon Live page is open may not appear
-in the history.
+last 10 spots per entry, from the last 24 hours. The server records new spots
+in the background every 60 seconds, whether or not the device or a DXMon
+Live page is open.
 
 **Using it away from home:** the DXMon server has no login, so keep it on
 your home network. To reach DXMon Live from elsewhere, use a VPN into your

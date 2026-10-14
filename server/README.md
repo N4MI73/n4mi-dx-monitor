@@ -74,6 +74,7 @@ which service, and real defaults.
 | `NO_CONFIRMS_FILE` | `no_confirms.csv` | No | Same -- note this one is relative, not under `/app/data/` by default |
 | `LAST_SEEN_FILE` | `/app/data/last_seen.json` | No | Same |
 | `SPOT_HISTORY_FILE` | `/app/data/spot_history.json` | No | Same |
+| `SPOT_RECORDER_INTERVAL_SECONDS` | `60` | No | How often the server records new HamAlert spots into `last_seen.json` and `spot_history.json` in the background, so history builds up even with no device or DXMon Live page open. `0` turns it off (history is then recorded only when the device or DXMon Live polls) |
 | `FLASK_SECRET_KEY` | a fixed dev default | No | Fine to leave default -- this is a LAN-only app with no authentication, so there's nothing this key is actually protecting |
 
 ### `dxmon-hamalert`
