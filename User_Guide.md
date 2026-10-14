@@ -11,6 +11,7 @@ running. It doesn't cover installation -- see those two READMEs for that.
 - [The device screens](#the-device-screens)
 - [Drilling into detail](#drilling-into-detail)
 - [Curating your lists (web pages)](#curating-your-lists-web-pages)
+- [DXMon Live: the full-size web view](#dxmon-live-the-full-size-web-view)
 - [Beam heading](#beam-heading)
 - [Best Practices](#best-practices)
   - [How DXMon and HamAlert work together](#how-dxmon-and-hamalert-work-together)
@@ -267,6 +268,48 @@ band-condition dot, HamAlert source, and drill-down screens are included;
 pin/favorite badges and the new-spot flash currently are not. Small **?**
 icons around the screens give short explanations on hover (or tap, on a
 phone/tablet).
+
+For a bigger view on a desktop or tablet, use **DXMon Live** (next section).
+
+## DXMon Live: the full-size web view
+
+**DXMon Live** (`/live`, also linked from every curation page) shows
+everything DXMon tracks on one screen, sized for a desktop monitor or a
+tablet. It runs on the same server as the curation pages, so it works with
+or without the physical device -- useful if you'd rather not build one, or
+want to check DXMon from another room.
+
+- **Every Watched and Needed entry at once**, in the same order the device
+  uses (live hits first; pinned Needed entries next). Two columns side by
+  side on a wide screen, stacked on a tablet. On a phone, the tables scroll
+  sideways.
+- **Each row shows** a status (**LIVE** = in HamAlert's current spot buffer,
+  **SEEN** = spotted in the last 24 hours, **QUIET** = neither), the latest
+  spot's frequency, mode, band (with PropMon's band-condition dot), spotter,
+  age and beam heading, and a **24-hour strip** with one dot per spot, so you
+  can see at a glance whether a station keeps showing up. Quiet Watched
+  entries show their ADXO dates instead (for example "starts Oct 16").
+- **Click or tap any row** for a popup with the full detail: beam heading
+  and distance, ADXO dates and QSL info (Watched), the callsign last heard
+  (Needed), your note, and the last 10 spots in UTC with spotter, continent
+  and comment. Close it with **Close**, **Esc**, or by clicking outside it.
+- **View only.** To change anything, use the **Edit Watched** / **Edit
+  Needed** links or the popup's editor link.
+- **Theme:** Auto, Dark or Light, top right. Auto follows your computer's or
+  tablet's own setting. Each browser remembers its own choice.
+- **Refreshes every 60 seconds**, the same as the device. If a refresh fails,
+  the last good data stays on screen and the status bar says so.
+
+History is the same store the device's drill-down screens use: up to the
+last 10 spots per entry, kept for 24 hours. New spots are recorded whenever
+the device or an open DXMon Live page polls the server, so with no device
+running, spots that arrive while no DXMon Live page is open may not appear
+in the history.
+
+**Using it away from home:** the DXMon server has no login, so keep it on
+your home network. To reach DXMon Live from elsewhere, use a VPN into your
+home network (for example Tailscale or WireGuard). Don't open a port for it
+on your router.
 
 ## Beam heading
 

@@ -21,7 +21,7 @@ restarting doesn't take down the other.
 
 | Service | File | Port | Role |
 |---|---|---|---|
-| `dxmon-adxo` | `adxo_service.py` | 8083 | Flask app: ADXO ingestion, web curation UI, Trigger Builder, beam heading, `/api/dxmon/*` endpoints the firmware polls |
+| `dxmon-adxo` | `adxo_service.py` | 8083 | Flask app: ADXO ingestion, web curation UI, Trigger Builder, the DXMon Live web view (`/live`), beam heading, `/api/dxmon/*` endpoints the firmware polls |
 | `dxmon-hamalert` | `hamalert_listener.py` | 8084 | Persistent Telnet connection to HamAlert, buffers recent real-time spots, exposes them over HTTP for `dxmon-adxo` to consume |
 
 `dxmon-adxo` calls `dxmon-hamalert`'s own HTTP endpoint internally to pull

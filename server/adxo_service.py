@@ -2109,6 +2109,72 @@ def api_beam_test(callsign):
     return jsonify({"callsign": callsign, "station_grid": STATION_GRID, **result})
 
 
+@app.route("/api/dxmon/live")
+def api_dxmon_live():
+    """DXMon Live web view (2026-10-14) -- everything the /live page shows, in one
+    request per 60 s refresh: every Watched and Needed entry exactly as the device
+    gets it (same builders, same sort order), plus each entry's own spot history
+    (the same up-to-10-spots / 24-hour store the device drill-downs read) and a
+    small status block. A NEW endpoint on purpose: /api/dxmon/watched and
+    /api/dxmon/needed (the firmware's contract) and /api/adxo + /api/watched
+    (external consumers) are untouched.
+
+    Calling the two builders here has the same side effect as a device poll --
+    recording any new spots into last_seen/spot_history -- which is harmless:
+    both stores dedupe on received_at."""
+    watched = _build_dxmon_watched()
+    needed = _build_dxmon_needed()
+
+    with _watched_lock:
+        watched_raw = list(_watched)
+    with _lock:
+        adxo_by_id = {e["id"]: e for e in _state["entries"]}
+        adxo_updated = _state["updated"]
+        poll_ok = _state.get("last_fetch_status") != "error"
+
+    # QSL info isn't in the device payload (the firmware never shows it); join it
+    # here from the Watched entry's source ADXO record for the popup.
+    qsl_by_call = {}
+    for w in watched_raw:
+        sid = w.get("source_adxo_id")
+        if sid and sid in adxo_by_id:
+            qsl_by_call[(w.get("callsign") or "").strip().upper()] = adxo_by_id[sid].get("qsl", "")
+
+    beam_cache = {}
+
+    def beam_for(callsign):
+        key = (callsign or "").strip().upper()
+        if key not in beam_cache:
+            beam_cache[key] = _get_heading_to_callsign(callsign)
+        return beam_cache[key]
+
+    watched_out = []
+    for item in watched:
+        call = (item["callsign"] or "").strip()
+        history = _get_spot_history("callsign:" + call.lower())
+        watched_out.append(dict(item, qsl=qsl_by_call.get(call.upper(), ""), history=history))
+
+    needed_out = []
+    for item in needed:
+        history = [dict(s, beam=beam_for(s.get("callsign")))
+                   for s in _get_spot_history("needed:" + item["id"])]
+        needed_out.append(dict(item, history=history))
+
+    hamalert_status, hamalert_err = _hamalert_get("/api/hamalert/status")
+    return jsonify({
+        "updated": datetime.now(EASTERN).isoformat(),
+        "station_grid": STATION_GRID,
+        "history_max": SPOT_HISTORY_MAX,
+        "history_hours": SPOT_HISTORY_MAX_AGE_HOURS,
+        "status": {
+            "adxo": {"updated": adxo_updated, "poll_ok": poll_ok},
+            "hamalert": hamalert_status if hamalert_status else {"unreachable": True, "error": hamalert_err},
+        },
+        "watched": watched_out,
+        "needed": needed_out,
+    })
+
+
 @app.route("/api/preview/status")
 def api_preview_status():
     """Combined status for the virtual device preview's Config tab. Deliberately
@@ -2470,6 +2536,16 @@ def page_preview():
     built yet), matching the series' established practice of never faking data
     for a screen that doesn't have a real backend behind it yet."""
     return render_template("preview.html")
+
+
+@app.route("/live")
+def page_live():
+    """DXMon Live (2026-10-14) -- the full-size web view for a desktop or tablet,
+    for operators with or without the physical device. View-only; editing stays on
+    the existing curation pages it links to. Fed client-side by /api/dxmon/live
+    every 60 s. Unlike /preview it is not a pixel copy of the device, so device
+    screen changes don't require changes here."""
+    return render_template("live.html")
 
 
 @app.route("/triggers")

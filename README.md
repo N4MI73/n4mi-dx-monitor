@@ -35,6 +35,9 @@ glance:
   list even when nothing's currently active for them.
 - Lets you drill into recent activity and spot history without leaving the
   device.
+- **DXMon Live**, a full-size web view for a desktop or tablet, shows every
+  Watched and Needed entry at once with its last 24 hours of spots -- with
+  or without the physical device.
 - Includes on-device Wi-Fi setup (a real captive portal) -- no need to
   hardcode credentials or reflash firmware just to change networks.
 - All curation (deciding what to track, building HamAlert triggers) happens
@@ -95,6 +98,8 @@ n4mi-dx-monitor/
 
 1. Set up the backend first -- see **[server/README.md](server/README.md)**.
 2. Build and flash the firmware -- see **[firmware/README.md](firmware/README.md)**.
+   Optional: if you only want the web view (DXMon Live, at `/live` on the
+   server), you can skip the device entirely.
 3. Once both are running, see **[User_Guide.md](User_Guide.md)** to start
    curating your Watched and Needed lists.
 
