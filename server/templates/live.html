@@ -266,6 +266,11 @@ function shortDate(ymd) {  // "2026-10-16" -> "Oct 16" (date-only, no timezone s
   if (p.length !== 3) return ymd || "";
   return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+p[1] - 1] + " " + (+p[2]);
 }
+function freqShort(f) {  // "14.095429" -> "14.095" in the rows; the popup shows the full value
+  const n = parseFloat(f);
+  return isNaN(n) ? (f || "") : n.toFixed(3);
+}
+function modeText(m) { return (m || "").toUpperCase(); }
 function beamDeg(beam) { return beam && beam.heading_deg != null ? Math.round(beam.heading_deg) + "°" : ""; }
 function beamLong(beam) { return beam ? Math.round(beam.heading_deg) + "° · " + beam.distance_mi.toLocaleString() + " mi" : "unavailable"; }
 function cond(c) { return c ? '<span class="cond ' + esc(c) + '"></span>' : ""; }
@@ -311,8 +316,8 @@ function rowCells(st, nameHtml, subHtml, spot, beamText, history, quietMsg) {
     mid = '<td colspan="5"><span class="quietmsg">' + esc(quietMsg) + "</span></td>" +
           '<td class="mono dim">' + esc(beamText) + "</td>";
   } else {
-    mid = '<td class="mono">' + esc(spot.frequency) + "</td>" +
-          '<td class="c-mode">' + esc(spot.mode) + "</td>" +
+    mid = '<td class="mono">' + esc(freqShort(spot.frequency)) + "</td>" +
+          '<td class="c-mode">' + esc(modeText(spot.mode)) + "</td>" +
           "<td>" + cond(spot.band_condition) + esc(spot.band) + "</td>" +
           '<td class="c-spot mono dim">' + esc(spot.spotter) + "</td>" +
           '<td class="' + (st === "live" ? "agelive" : "dim") + '">' + esc(ageShort(spot.received_at)) + "</td>" +
@@ -421,7 +426,7 @@ function renderModal() {
     '<td class="' + (i === 0 && st === "live" ? "agelive" : "dim") + '">' + esc(ageLong(s.received_at)) + "</td>" +
     '<td class="mono">' + esc(s.frequency) + "</td>" +
     "<td>" + cond(s.band_condition) + esc(s.band) + "</td>" +
-    "<td>" + esc(s.mode) + "</td>" +
+    "<td>" + esc(modeText(s.mode)) + "</td>" +
     (isW ? "" : '<td class="mono">' + esc(s.callsign) + "</td>") +
     '<td class="mono dim">' + esc(s.spotter) + "</td>" +
     '<td class="dim">' + esc(s.spotter_continent) + "</td>" +

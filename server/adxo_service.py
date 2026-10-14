@@ -2140,6 +2140,15 @@ def api_dxmon_live():
         if sid and sid in adxo_by_id:
             qsl_by_call[(w.get("callsign") or "").strip().upper()] = adxo_by_id[sid].get("qsl", "")
 
+    # Stored history is only pruned to SPOT_HISTORY_MAX_AGE_HOURS when a NEW
+    # spot is recorded for that same key, so an entry that has gone quiet keeps
+    # its old spots on disk (found 2026-10-14: entries showing 31-day-old spots).
+    # Filter at read time here so DXMon Live only ever shows the 24 h window.
+    cutoff_iso = (datetime.now(EASTERN) - timedelta(hours=SPOT_HISTORY_MAX_AGE_HOURS)).isoformat()
+
+    def recent(history):
+        return [s for s in history if (s.get("received_at") or "") >= cutoff_iso]
+
     beam_cache = {}
 
     def beam_for(callsign):
@@ -2151,13 +2160,13 @@ def api_dxmon_live():
     watched_out = []
     for item in watched:
         call = (item["callsign"] or "").strip()
-        history = _get_spot_history("callsign:" + call.lower())
+        history = recent(_get_spot_history("callsign:" + call.lower()))
         watched_out.append(dict(item, qsl=qsl_by_call.get(call.upper(), ""), history=history))
 
     needed_out = []
     for item in needed:
         history = [dict(s, beam=beam_for(s.get("callsign")))
-                   for s in _get_spot_history("needed:" + item["id"])]
+                   for s in recent(_get_spot_history("needed:" + item["id"]))]
         needed_out.append(dict(item, history=history))
 
     hamalert_status, hamalert_err = _hamalert_get("/api/hamalert/status")

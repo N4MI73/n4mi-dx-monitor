@@ -279,6 +279,8 @@ tablet. It runs on the same server as the curation pages, so it works with
 or without the physical device -- useful if you'd rather not build one, or
 want to check DXMon from another room.
 
+![DXMon Live on a desktop: every Watched and Needed entry at once, each with its latest spot and a 24-hour activity strip.](images/dxmon_live.png)
+
 - **Every Watched and Needed entry at once**, in the same order the device
   uses (live hits first; pinned Needed entries next). Two columns side by
   side on a wide screen, stacked on a tablet. On a phone, the tables scroll
@@ -293,8 +295,12 @@ want to check DXMon from another room.
   and distance, ADXO dates and QSL info (Watched), the callsign last heard
   (Needed), your note, and the last 10 spots in UTC with spotter, continent
   and comment. Close it with **Close**, **Esc**, or by clicking outside it.
+
+  ![A DXMon Live popup: beam heading, ADXO dates and QSL info, the 24-hour strip, and the last 10 spots.](images/dxmon_live_popup.png)
+
 - **View only.** To change anything, use the **Edit Watched** / **Edit
   Needed** links or the popup's editor link.
+
 - **Theme:** Auto, Dark or Light, top right. Auto follows your computer's or
   tablet's own setting. Each browser remembers its own choice.
 - **Refreshes every 60 seconds**, the same as the device. If a refresh fails,
