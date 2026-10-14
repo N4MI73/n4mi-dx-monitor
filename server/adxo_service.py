@@ -1293,9 +1293,12 @@ def healthz():
 
 @app.route("/api/adxo")
 def api_adxo():
-    # Consumed externally by the Propagation Dashboard project (Ham Shack
-    # Automation) as of 2026-09-10 -- not documented in any README by design,
-    # see DXMon's own Joplin note. Do not remove/reshape without checking there.
+    # Consumed externally, read-only, by the Propagation Dashboard project (Ham
+    # Shack Automation) as of 2026-09-10 and by N4MI DXCC Analyzer as of
+    # 2026-10-13 (uses updated, entries[].id/dxcc/callsign/begin/end) -- not
+    # documented in any README by design, see DXMon's own Joplin note.
+    # Additive changes only: do not remove/rename fields or reshape without
+    # checking there.
     with _lock:
         return jsonify({
             "updated": _state["updated"],
@@ -1339,6 +1342,9 @@ def debug():
 
 @app.route("/api/watched", methods=["GET"])
 def api_watched_list():
+    # Consumed externally, read-only, by N4MI DXCC Analyzer as of 2026-10-13
+    # (uses entries[].source_adxo_id/dxcc/callsign). Additive changes only:
+    # do not remove/rename fields or reshape without checking DXMon's Joplin note.
     with _watched_lock:
         return jsonify({"entries": list(_watched), "count": len(_watched)})
 
