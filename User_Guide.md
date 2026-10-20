@@ -13,6 +13,7 @@ running. It doesn't cover installation -- see those two READMEs for that.
 - [Curating your lists (web pages)](#curating-your-lists-web-pages)
 - [DXMon Live: the full-size web view](#dxmon-live-the-full-size-web-view)
 - [Beam heading](#beam-heading)
+- [Working with N4MI DXCC Analyzer](#working-with-n4mi-dxcc-analyzer)
 - [Best Practices](#best-practices)
   - [How DXMon and HamAlert work together](#how-dxmon-and-hamalert-work-together)
   - [Organizing your HamAlert triggers with comments](#organizing-your-hamalert-triggers-with-comments)
@@ -325,6 +326,80 @@ automatically. If a heading is ever missing, the underlying lookup couldn't
 resolve that particular callsign -- nothing to configure, it just means that
 one entry didn't have a usable heading calculated for it.
 
+## Working with N4MI DXCC Analyzer
+
+[N4MI DXCC Analyzer](https://github.com/N4MI73/n4mi-dxcc-analyzer) is a
+separate project that reads your LoTW Award Credit Matrix and works out which
+DXCC entities and band/mode slots you still need. The two split the work:
+
+- **The analyzer knows what you still need.**
+- **DXMon knows what's on the air right now, and alerts you.**
+
+Neither depends on the other. DXMon works exactly the same without the
+analyzer, and the analyzer works fully without DXMon.
+
+### What the analyzer reads from DXMon
+
+To connect them, enter your DXMon server's address (for example
+`http://192.168.6.29:8083`) in the analyzer's **Settings → DX Monitor**. It
+then reads three of DXMon's lists:
+
+| DXMon list | What the analyzer does with it |
+|---|---|
+| DXpeditions (`/api/adxo`) | Tags needed entities that have a DXpedition on the air now or starting within 30 days |
+| Watched (`/api/watched`) | Adds **NOT WATCHED** to a tag when that DXpedition isn't on your Watched list -- a nudge to add it here |
+| Needed (`/api/needed`) | Tags its Suggestions **ALREADY IN DX MONITOR**, and lists any Needed entry whose name matches no HamAlert entity |
+
+It only ever **reads**. It reads when you open the page that needs the data
+(at most once every 15 minutes) or press Refresh, and it never adds, removes
+or changes anything in DXMon. Your Watched and Needed lists stay yours to
+curate here.
+
+### Filling your Needed list from Suggestions
+
+The analyzer's **Suggestions** page ranks the best candidates for DXMon's
+Needed list: never-confirmed entities first (DXpeditions on the air or
+starting soon at the top, then Club Log Most Wanted), then band/mode slots on
+entities you've already confirmed. For each one you want to chase:
+
+1. Press **Copy** next to the name in Suggestions. It's HamAlert's spelling,
+   so it will match spots.
+2. Paste it into DXMon's **Needed** page (`/needed`).
+3. For an entity suggestion, leave bands and modes unchecked. For a band-slot
+   suggestion, check exactly what the analyzer's **Tick in DX Monitor**
+   column shows (Phone means SSB; Digital means FT8 and FT4).
+4. Build the matching HamAlert trigger with the Trigger Builder, using the
+   same entity, bands and modes.
+5. Back in the analyzer, press **Refresh** on Suggestions. The entry now
+   shows **ALREADY IN DX MONITOR**.
+
+The device shows up to **30** Needed entries, which is why the analyzer's
+defaults (20 entities plus 10 band slots) add up to 30. Entries beyond 30
+still appear on DXMon Live and the web pages, but not on the device.
+
+**A caution on spellings:** the Trigger Builder's entity picker, and so its
+"also add to Needed" checkbox, uses the names in `no_confirms.csv`, which are
+LoTW's spellings. Most match HamAlert's, but a few don't (LoTW's "U K BASES ON
+CYPRUS" is HamAlert's "UK Sovereign Base Areas on Cyprus"), and a Needed
+entry spelled the LoTW way never gets a hit. Copying the name from the
+analyzer's Suggestions avoids this, and the analyzer lists any Needed entry
+whose name matches no HamAlert entity, so a mismatch gets caught either way.
+
+### Refreshing the Trigger Builder's entity list
+
+The analyzer's **Export** menu offers DXMon's `no_confirms.csv`, your
+never-confirmed entities in the format DXMon's picker expects. DXMon builds
+this file into its server image, so loading a new one takes three steps:
+
+1. Export `no_confirms.csv` from the analyzer.
+2. Replace `server/no_confirms.csv` in the DXMon repository, then commit and
+   push.
+3. Pull and redeploy the `dxmon` stack in Portainer.
+
+Repeat after a LoTW update credits new entities. At the same time, remove
+the Needed entries and HamAlert triggers for anything newly credited -- the
+analyzer's Suggestions will stop suggesting them too.
+
 ## Best Practices
 
 ### How DXMon and HamAlert work together
@@ -514,7 +589,8 @@ Worth comparing your HamAlert trigger list against `/watched` and
 - A Watched operation reaches its announced end date, or DXMon shows its
   Ended reminder.
 - A Needed entry picks up the 30-day review flag.
-- A needed entity or band/mode slot gets confirmed.
+- A needed entity or band/mode slot gets confirmed (if you use N4MI DXCC
+  Analyzer, right after importing a new LoTW matrix into it).
 - A DXpedition changes its callsign, schedule, bands, or modes.
 - HamAlert shows a matching spot that never shows up on the device.
 - A curated DXMon entry stays quiet despite known real on-air activity.
@@ -529,5 +605,7 @@ Worth comparing your HamAlert trigger list against `/watched` and
 | Unexpected or heavy spot traffic | Review obsolete triggers, overly broad conditions, and your Spotter Continent filter |
 | Every beam heading is blank at once | Server-side issue, not a per-callsign one -- see `server/README.md`'s own beam-heading note |
 | No band-condition dot showing | PropMon unreachable, or no current rating for that band -- not a fourth "unknown" state |
-| Brief blank screen roughly every 15 minutes | Expected scheduled-reboot mitigation -- see "A quick heads-up" near the top of this guide |
+| A Needed entry never gets a hit, though HamAlert's trigger fires | Check its spelling against HamAlert's DXCC picker -- an entity added with the Trigger Builder's "also add to Needed" uses LoTW's spelling. N4MI DXCC Analyzer's Suggestions page lists any mismatch |
+| A Needed entry shows on DXMon Live but not on the device | The device shows at most 30 Needed entries |
+| Brief blank screen roughly every 12 minutes | Expected scheduled-reboot mitigation -- see "A quick heads-up" near the top of this guide |
 | Device can't reach the server after Wi-Fi Setup | Confirm the device and server ended up on the same network, and that the server address is correct |

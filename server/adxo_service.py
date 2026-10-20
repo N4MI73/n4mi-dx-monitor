@@ -2460,6 +2460,11 @@ def page_needed_pin_down(needed_id):
 
 @app.route("/api/needed", methods=["GET"])
 def api_needed_list():
+    # Consumed externally, read-only, by N4MI DXCC Analyzer as of 2026-10-20 (uses
+    # entries[].entity/band/mode: blank = any, comma-separated for several values)
+    # to tag its Suggestions "already in DX Monitor" -- see DXMon's own Joplin note.
+    # Additive changes only: keep the path, the top-level "entries" array and those
+    # three fields' meaning. The analyzer never calls POST/DELETE.
     with _needed_lock:
         return jsonify({"entries": list(_needed), "count": len(_needed)})
 
