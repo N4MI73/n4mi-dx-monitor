@@ -1361,7 +1361,7 @@ static void setup_btn_cb(lv_event_t *e)
 static lv_obj_t *make_screen_config(void)
 {
     lv_obj_t *scr = make_screen();
-    create_header(scr, "CONFIG", "v1.0");
+    create_header(scr, "CONFIG", "v1.1");
 
     lv_obj_t *panel = make_panel(scr, 16, 72, 768, 240);
 
@@ -1382,7 +1382,7 @@ static lv_obj_t *make_screen_config(void)
     make_config_row(panel, nullptr, "Curate at", curate_buf, COLOR_BADGE_BLUE_TX, 190);
     make_divider(panel, 20, 210, 728);
 
-    make_config_row(panel, nullptr, "Firmware", "v1.0", COLOR_TEXT_PRIMARY, 227);
+    make_config_row(panel, nullptr, "Firmware", "v1.1", COLOR_TEXT_PRIMARY, 227);
 
     // Force Refresh -- real, functional.
     lv_obj_t *refresh_btn = lv_btn_create(scr);

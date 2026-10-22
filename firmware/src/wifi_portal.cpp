@@ -98,6 +98,31 @@ static void rebuild_unique_network_list() {
 // COLOR_STATUS_GREEN/COLOR_STATUS_RED/COLOR_BG/COLOR_TEXT_PRIMARY) rather
 // than PropMon's teal, so the phone-side setup page feels like part of the
 // same product as the device itself.
+// Escapes text for safe insertion into the setup page, both as visible
+// text and inside a quoted attribute. Network names are chosen by whoever
+// runs a nearby access point, so a scanned SSID is untrusted input: without
+// this, a crafted name could inject active markup into the page (2026-10-20
+// security review), and an ordinary name containing an apostrophe
+// ("Joe's Wi-Fi") was cut short at the apostrophe and could never be joined.
+// The browser decodes these entities before submitting the form, so the
+// SSID posted back to /connect is exactly the original name.
+static String html_escape(const String &in) {
+    String out;
+    out.reserve(in.length() + 16);
+    for (size_t i = 0; i < in.length(); i++) {
+        char c = in[i];
+        switch (c) {
+            case '&':  out += "&amp;";  break;
+            case '<':  out += "&lt;";   break;
+            case '>':  out += "&gt;";   break;
+            case '\'': out += "&#39;";  break;
+            case '"':  out += "&quot;"; break;
+            default:   out += c;        break;
+        }
+    }
+    return out;
+}
+
 static void send_setup_page(const char *error_msg) {
     String html;
     html.reserve(2400);
@@ -134,7 +159,8 @@ static void send_setup_page(const char *error_msg) {
         html += "<form method='POST' action='/connect'>";
         html += "<label>Network</label><select name='ssid'>";
         for (uint8_t i = 0; i < unique_count; i++) {
-            html += "<option value='" + unique_ssids[i] + "'>" + unique_ssids[i];
+            String safe_ssid = html_escape(unique_ssids[i]);
+            html += "<option value='" + safe_ssid + "'>" + safe_ssid;
             if (unique_locked[i]) html += " &#128274;";
             html += "</option>";
         }
