@@ -289,7 +289,9 @@ For a bigger view on a desktop or tablet, use **DXMon Live** (next section).
 everything DXMon tracks on one screen, sized for a desktop monitor or a
 tablet. It runs on the same server as the curation pages, so it works with
 or without the physical device -- useful if you'd rather not build one, or
-want to check DXMon from another room.
+want to check DXMon from another room. For a walkthrough of how I use it
+alongside the device, see the blog post
+[DXMon Live: Chasing DX From Any Browser](https://n4mi.tech/dxmon-live-chasing-dx-from-any-browser/).
 
 ![DXMon Live on a desktop: every Watched and Needed entry at once, each with its latest spot and a 24-hour activity strip.](images/dxmon_live_desktop.png)
 
