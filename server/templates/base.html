@@ -38,6 +38,13 @@
       letter-spacing: 0.03em;
       color: var(--text);
     }
+    header h1 .version {
+      font-size: 0.75rem;
+      font-weight: normal;
+      color: var(--muted);
+      letter-spacing: 0;
+      margin-left: 0.3rem;
+    }
     header nav a {
       color: var(--muted);
       text-decoration: none;
@@ -162,7 +169,7 @@
 </head>
 <body>
   <header>
-    <h1>DXMon Curation</h1>
+    <h1>DXMon Curation <span class="version" title="DXMon release v{{ dxmon_version }}">v{{ dxmon_version }}</span></h1>
     <nav>
       <a href="{{ url_for('page_index') }}" class="{{ 'active' if request.path == '/' else '' }}">Browse ADXO</a>
       <a href="{{ url_for('page_watched') }}" class="{{ 'active' if request.path == '/watched' else '' }}">Watched</a>

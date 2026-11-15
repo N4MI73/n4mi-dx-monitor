@@ -58,6 +58,13 @@ EASTERN = ZoneInfo("America/New_York")
 MIN_REFRESH_INTERVAL_SECONDS = int(os.environ.get("MIN_REFRESH_INTERVAL_SECONDS", 3600))
 
 REQUEST_TIMEOUT_SECONDS = 20
+# DXMon release version (the repo's GitHub release tag, vX.Y), shown in the Curation
+# pages' header. Bump it with every release, together with the firmware's version
+# strings in main.cpp when the firmware changes too. A server-only release (like
+# v1.2, 2026-11-15) bumps only this; the device's Config screen keeps showing the
+# firmware's own version.
+DXMON_VERSION = "1.2"
+
 USER_AGENT = "N4MI-DXMon/1.0 (+https://github.com/N4MI73/n4mi-dx-monitor; contact via n4mi73@gmail.com)"
 
 # Watched-list persistence. Must live under a Docker volume (see docker-compose.yml) --
@@ -1403,6 +1410,12 @@ def _get_band_condition(band):
 # --------------------------------------------------------------------------------------
 
 app = Flask(__name__)
+
+
+@app.context_processor
+def _inject_version():
+    """Makes DXMON_VERSION available to every template (base.html's header)."""
+    return {"dxmon_version": DXMON_VERSION}
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dxmon-dev-secret")
 
 
