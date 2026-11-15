@@ -210,10 +210,12 @@ also remove the matching HamAlert trigger.
 
 Your curated Needed list. To add an entry:
 
-1. Type the entity name -- **copy it exactly from HamAlert's own DXCC
-   condition picker** when you build the matching trigger. Matching only
-   handles case and spacing differences, not spelling differences, so this
-   is the one step worth getting right.
+1. Start typing the entity name and **pick it from the list**. The list is
+   HamAlert's own spelling, and a LoTW spelling is converted automatically.
+   DXMon stores the entity's DXCC number with the entry and matches spots by
+   that number, so a spelling difference can't cause a missed hit. A name
+   that isn't on the list is kept as typed, matched by name only, and flagged
+   **Name not recognised** -- edit it and pick the name from the list.
 2. Check any bands and/or modes for a specific slot, or leave everything
    unchecked for a whole-entity target.
 3. Optionally add a note, then submit.
@@ -239,9 +241,18 @@ paste the result into hamalert.org yourself -- but this tool does the
 recipe-splitting math for you (avoiding HamAlert's own spot-volume limits on
 large multi-entity triggers).
 
+Entities are shown in HamAlert's spelling with their DXCC number (the
+picker's list comes from `no_confirms.csv`, which uses LoTW's spellings, and
+DXMon converts them), so you can find each one in HamAlert's DXCC picker by
+name or number.
+
 If you're building a trigger for an entity, check **"also add to Needed"**
 to curate it as a whole-entity target at the same time, without a separate
 trip to the Needed page.
+
+The **Best practices** panel at the top of the page is a short checklist for
+building Watched and Needed triggers; the full version is
+[Best Practices](#best-practices) below.
 
 ### HamAlert (`/hamalert`)
 
@@ -377,13 +388,13 @@ The device shows up to **30** Needed entries, which is why the analyzer's
 defaults (20 entities plus 10 band slots) add up to 30. Entries beyond 30
 still appear on DXMon Live and the web pages, but not on the device.
 
-**A caution on spellings:** the Trigger Builder's entity picker, and so its
-"also add to Needed" checkbox, uses the names in `no_confirms.csv`, which are
-LoTW's spellings. Most match HamAlert's, but a few don't (LoTW's "U K BASES ON
-CYPRUS" is HamAlert's "UK Sovereign Base Areas on Cyprus"), and a Needed
-entry spelled the LoTW way never gets a hit. Copying the name from the
-analyzer's Suggestions avoids this, and the analyzer lists any Needed entry
-whose name matches no HamAlert entity, so a mismatch gets caught either way.
+**Spellings (updated 2026-11-15):** HamAlert's entity names differ from
+LoTW's in about a third of cases, and island names use "Is." or "I." without
+a pattern you can guess. This no longer causes missed hits: DXMon matches
+Needed entries by DXCC number, and converts LoTW spellings (from
+`no_confirms.csv` or typed in) to HamAlert's. The analyzer's Suggestions
+page still lists any Needed entry whose name matches no HamAlert entity --
+on DXMon's Needed page the same entry is flagged **Name not recognised**.
 
 ### Refreshing the Trigger Builder's entity list
 
@@ -399,6 +410,17 @@ this file into its server image, so loading a new one takes three steps:
 Repeat after a LoTW update credits new entities. At the same time, remove
 the Needed entries and HamAlert triggers for anything newly credited -- the
 analyzer's Suggestions will stop suggesting them too.
+
+### Refreshing the HamAlert entity list
+
+`server/hamalert_entities.csv` lists every current DXCC entity with its
+number, HamAlert's exact name and LoTW's spelling. It's how DXMon gives
+Needed entries their DXCC numbers and converts LoTW spellings. The copy in
+the repository came from N4MI DXCC Analyzer on 2026-11-15, checked against
+HamAlert's own picker. It only needs replacing when a DXCC entity is added
+or renamed: replace the file, commit and push, then pull and redeploy the
+`dxmon` stack. If the file is missing, DXMon still runs and matches every
+Needed entry by name, as it did before.
 
 ## Best Practices
 
@@ -436,11 +458,11 @@ trigger actually behind it.
   because HamAlert itself caps how many spots a single trigger can generate
   per day -- a trigger covering too many entities at once can silently hit
   that ceiling.
-- **Copy the entity name directly from HamAlert's own DXCC condition
-  picker**, and paste that exact string into DXMon's Needed curation page.
-  Matching between the two only tolerates case and spacing differences, not
-  spelling differences -- this is the single most common reason a real,
-  correctly-firing HamAlert trigger never shows up as a hit on DXMon.
+- **Use the same entity on both sides.** In HamAlert's DXCC picker,
+  choose the entity by the name and number DXMon shows; on DXMon's Needed
+  page, pick the name from the list. DXMon matches Needed entries by DXCC
+  number, so the spelling doesn't have to match, but an entry flagged
+  **Name not recognised** has no number and matches by name only.
 - **When curating a SLOT** (a specific band/mode gap), check the same
   bands and modes in DXMon that you set as conditions in the real HamAlert
   trigger. DXMon offers the four modes supported by its current Needed/SLOT
@@ -552,17 +574,17 @@ The same real steps, once per target, rather than improvising each time:
    remove or disable the HamAlert trigger *and* remove the Watched entry.
 
 **Needed, whole entity:**
-1. Copy the entity name exactly from HamAlert's own DXCC condition picker.
-2. Add it to `/needed` with no band/mode restriction.
-3. Generate and enter the trigger, optionally checking "also add to
-   Needed" to do steps 1-2 and this step together.
-4. Confirm the trigger and the DXMon entry use the identical entity name.
-5. Remove both once the entity is confirmed and no longer needed.
+1. Add it to `/needed`, picking the name from the list, with no band/mode
+   restriction.
+2. Generate and enter the trigger, optionally checking "also add to
+   Needed" on the Trigger Builder to do step 1 and this step together.
+3. Confirm the trigger and the DXMon entry are for the same entity (same
+   DXCC number).
+4. Remove both once the entity is confirmed and no longer needed.
 
 **Needed, specific band/mode SLOT:**
-1. Copy the entity name exactly from HamAlert's own DXCC condition picker.
-2. Add the entity to `/needed`, checking only the bands/modes you still
-   need.
+1. Add the entity to `/needed`, picking the name from the list.
+2. Check only the bands/modes you still need.
 3. Build the HamAlert trigger with the identical DXCC, band, and mode
    conditions -- a mismatch here means a real spot HamAlert catches can
    still be silently ignored by DXMon.
@@ -600,12 +622,12 @@ Worth comparing your HamAlert trigger list against `/watched` and
 | Symptom | First things to check |
 |---|---|
 | A curated target never shows activity | Confirm a matching HamAlert trigger exists, is enabled, and uses the Telnet destination |
-| HamAlert shows a spot but DXMon doesn't classify it | Confirm the matching `/watched` or `/needed` entry exists; check entity spelling, full-callsign form, bands, and modes |
+| HamAlert shows a spot but DXMon doesn't classify it | Confirm the matching `/watched` or `/needed` entry exists; check full-callsign form, bands, and modes, and that the Needed entry isn't flagged "Name not recognised" |
 | A compound DXpedition callsign never matches | Use HamAlert's Full Callsign condition, and edit the Watched entry to the same complete form |
 | Unexpected or heavy spot traffic | Review obsolete triggers, overly broad conditions, and your Spotter Continent filter |
 | Every beam heading is blank at once | Server-side issue, not a per-callsign one -- see `server/README.md`'s own beam-heading note |
 | No band-condition dot showing | PropMon unreachable, or no current rating for that band -- not a fourth "unknown" state |
-| A Needed entry never gets a hit, though HamAlert's trigger fires | Check its spelling against HamAlert's DXCC picker -- an entity added with the Trigger Builder's "also add to Needed" uses LoTW's spelling. N4MI DXCC Analyzer's Suggestions page lists any mismatch |
+| A Needed entry never gets a hit, though HamAlert's trigger fires | If it's flagged "Name not recognised" on `/needed`, edit it and pick the name from the list. Otherwise check the trigger is for the same DXCC number and the same bands and modes |
 | A Needed entry shows on DXMon Live but not on the device | The device shows at most 30 Needed entries |
 | Brief blank screen roughly every 12 minutes | Expected scheduled-reboot mitigation -- see "A quick heads-up" near the top of this guide |
 | Device can't reach the server after Wi-Fi Setup | Confirm the device and server ended up on the same network, and that the server address is correct |

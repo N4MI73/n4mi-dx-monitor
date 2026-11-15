@@ -88,6 +88,14 @@ _LEGACY_WANTED_FILE = os.environ.get("WANTED_FILE", "/app/data/wanted.json")
 # matches the already-decided "Dan's own export is the source of truth" design).
 NO_CONFIRMS_FILE = os.environ.get("NO_CONFIRMS_FILE", "no_confirms.csv")
 
+# HamAlert entity reference (added 2026-11-15) -- every current DXCC entity with its
+# ARRL number, HamAlert's exact name and LoTW's spelling. Snapshot supplied by the
+# N4MI DXCC Analyzer project (checked against HamAlert's own picker 2026-11-15), so
+# neither app depends on the other being up. Lets Needed entries carry a DXCC number
+# and match spots by number instead of by name -- see _needed_match_key(). Built into
+# the image like no_confirms.csv; refresh it only when an entity is added or renamed.
+HAMALERT_ENTITIES_FILE = os.environ.get("HAMALERT_ENTITIES_FILE", "hamalert_entities.csv")
+
 # Above this many selected entities, a single trigger risks HamAlert's 10,000-
 # spots/day auto-disable ceiling (confirmed real, 2026-08-18 -- a 61-entity trigger
 # hit it). Below the threshold, one combined recipe is fine. Callsign-based triggers
@@ -522,7 +530,10 @@ def _remove_watched(watched_id):
 # deliberately not merged into the Watched data model, since the matching key is
 # fundamentally different (entity name +/- band/mode, not a callsign).
 #
-# Entry shape: {id, entity, band, mode, note, added}. band and mode are each
+# Entry shape: {id, entity, dxcc, band, mode, note, added}. dxcc (added 2026-11-15) is
+# the ARRL DXCC number resolved from the entity name via HAMALERT_ENTITIES_FILE; it is
+# absent when the name isn't a known HamAlert/LoTW name, and the entry then matches
+# spots by name as before. band and mode are each
 # independently optional -- BOTH blank means "whole entity, any band/mode" (the old
 # Needed semantic); either set means "this specific slot" (the old Wanted semantic).
 # There is no stored type/category field -- see _needed_entry_kind() below, which
@@ -547,6 +558,7 @@ def _load_needed():
         if isinstance(data, list):
             _needed = data
             log.info("Loaded %d needed entries from %s", len(_needed), NEEDED_FILE)
+            _backfill_needed_dxcc()
         else:
             log.error("Needed file did not contain a list -- starting empty, not overwriting")
         return
@@ -588,6 +600,33 @@ def _save_needed():
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(_needed, f, indent=2)
     os.replace(tmp_path, NEEDED_FILE)
+
+
+def _backfill_needed_dxcc():
+    """One-time, idempotent upgrade (2026-11-15): give every Needed entry that has no
+    dxcc yet the number its entity name resolves to, and correct the stored name to
+    HamAlert's exact spelling while doing so. Entries whose names don't resolve are
+    left untouched (they keep matching by name) and are logged so they can be fixed
+    on /needed. Saves only if something changed. Requires _load_hamalert_entities()
+    to have run first."""
+    changed = 0
+    unresolved = []
+    for w in _needed:
+        if w.get("dxcc"):
+            continue
+        number, name = _resolve_entity(w.get("entity"))
+        if number is None:
+            unresolved.append(w.get("entity"))
+            continue
+        w["dxcc"] = number
+        w["entity"] = name
+        changed += 1
+    if changed:
+        _save_needed()
+        log.info("Added DXCC numbers to %d needed entries", changed)
+    if unresolved:
+        log.warning("Needed entries with no DXCC number (matched by name only): %s",
+                    ", ".join(str(u) for u in unresolved))
 
 
 def _needed_entry_kind(entry):
@@ -688,10 +727,13 @@ def _add_needed(entity, band, mode, note=""):
     mode = (mode or "").strip()
     if not entity:
         return None, "Entity is required."
+    # 2026-11-15: store HamAlert's exact name and the DXCC number when the name is
+    # known; an unknown name is kept as typed and matches by name only.
+    number, canonical = _resolve_entity(entity)
 
     entry = {
         "id": uuid.uuid4().hex[:12],
-        "entity": entity,
+        "entity": canonical or entity,
         "band": band,
         "mode": mode,
         "note": (note or "").strip(),
@@ -701,6 +743,8 @@ def _add_needed(entity, band, mode, note=""):
         # once an entry is actually pinned.
         "pinned": False,
     }
+    if number is not None:
+        entry["dxcc"] = number
     with _needed_lock:
         _needed.append(entry)
         _save_needed()
@@ -726,11 +770,16 @@ def _update_needed(needed_id, entity, band, mode, note=""):
     mode = (mode or "").strip()
     if not entity:
         return None, "Entity is required."
+    number, canonical = _resolve_entity(entity)
 
     with _needed_lock:
         for w in _needed:
             if w["id"] == needed_id:
-                w["entity"] = entity
+                w["entity"] = canonical or entity
+                if number is not None:
+                    w["dxcc"] = number
+                else:
+                    w.pop("dxcc", None)
                 w["band"] = band
                 w["mode"] = mode
                 w["note"] = (note or "").strip()
@@ -837,6 +886,73 @@ def _load_no_confirms():
         _no_confirms_entities = []
 
 
+# --------------------------------------------------------------------------------------
+# HamAlert entity reference -- added 2026-11-15, see HAMALERT_ENTITIES_FILE's comment.
+#
+# Why: HamAlert's spot JSON carries a numeric "dxcc" field on every spot (confirmed
+# live 2026-11-15: 100 of 100 buffered spots), so matching Needed entries by number
+# makes spelling irrelevant. Before this, an island entity typed with the wrong
+# abbreviation ("Is." vs "I.") or a LoTW spelling from no_confirms.csv silently never
+# matched. Names are still resolved and stored for display and for the analyzer.
+# --------------------------------------------------------------------------------------
+
+_hamalert_entities = []      # list of {"dxcc": int, "name": str, "lotw": str}, sorted by name
+_entity_by_number = {}       # dxcc int -> row
+_entity_by_name = {}         # normalized HamAlert name -> row
+_entity_by_lotw = {}         # normalized LoTW name -> row
+
+
+def _load_hamalert_entities():
+    """Load HAMALERT_ENTITIES_FILE. A missing or unreadable file degrades to empty
+    tables: every Needed entry then matches by name exactly as before 2026-11-15."""
+    global _hamalert_entities, _entity_by_number, _entity_by_name, _entity_by_lotw
+    rows = []
+    try:
+        with open(HAMALERT_ENTITIES_FILE, "r", encoding="utf-8", newline="") as f:
+            for row in csv.DictReader(f):
+                name = (row.get("hamalert_name") or "").strip()
+                try:
+                    number = int((row.get("dxcc") or "").strip())
+                except ValueError:
+                    continue
+                if name:
+                    rows.append({"dxcc": number, "name": name,
+                                 "lotw": (row.get("lotw_name") or "").strip()})
+        log.info("Loaded %d HamAlert entities from %s", len(rows), HAMALERT_ENTITIES_FILE)
+    except FileNotFoundError:
+        log.warning("No HamAlert entity file at %s -- Needed entries will match by name only",
+                    HAMALERT_ENTITIES_FILE)
+    except (csv.Error, OSError) as exc:
+        log.error("Failed to load %s -- Needed entries will match by name only: %s",
+                  HAMALERT_ENTITIES_FILE, exc)
+    rows.sort(key=lambda r: r["name"].lower())
+    _hamalert_entities = rows
+    _entity_by_number = {r["dxcc"]: r for r in rows}
+    _entity_by_name = {_normalize_entity_name(r["name"]): r for r in rows}
+    _entity_by_lotw = {_normalize_entity_name(r["lotw"]): r for r in rows if r["lotw"]}
+
+
+def _resolve_entity(name):
+    """Returns (dxcc_number, HamAlert_name) for a HamAlert or LoTW entity name, or
+    (None, None) if the name isn't known. Same normalization as spot matching
+    (trimmed and lowercased only) -- a near-miss spelling stays unresolved on purpose
+    so it shows up on /needed instead of being guessed at."""
+    key = _normalize_entity_name(name)
+    if not key:
+        return None, None
+    row = _entity_by_name.get(key) or _entity_by_lotw.get(key)
+    if not row:
+        return None, None
+    return row["dxcc"], row["name"]
+
+
+def _entity_label(name):
+    """'Name (number)' for a resolvable entity, else the name unchanged -- used in
+    trigger recipes so the HamAlert picker entry can be found by either."""
+    number, canonical = _resolve_entity(name)
+    return f"{canonical} ({number})" if number is not None else (name or "").strip()
+
+
 DIGITAL_MODES = "FT8, FT4"
 VOICE_CW_MODES = "CW, SSB, RTTY"
 
@@ -855,7 +971,9 @@ def _build_trigger_recipes(callsigns, entities):
     recipes = []
 
     clean_callsigns = sorted({c.strip().upper() for c in callsigns if c.strip()})
-    clean_entities = sorted({e.strip() for e in entities if e.strip()})
+    # 2026-11-15: resolved to HamAlert's exact name and shown with the DXCC number,
+    # so a LoTW spelling from no_confirms.csv can't be mistyped into HamAlert's picker.
+    clean_entities = sorted({_entity_label(e) for e in entities if e.strip()})
 
     if clean_callsigns:
         recipes.append({
@@ -874,15 +992,16 @@ def _build_trigger_recipes(callsigns, entities):
                 "condition_value": ", ".join(clean_entities),
                 "mode_filter": None,
                 "note": (
-                    "Select each entity BY NAME in HamAlert's own DXCC picker, not by "
-                    "prefix -- some prefixes are shared across entities (e.g. 3Y covers "
-                    "both Bouvet Island and Peter I Island)."
+                    "Select each entity in HamAlert's own DXCC picker by the name and "
+                    "number shown here, not by prefix -- some prefixes are shared across "
+                    "entities (e.g. 3Y covers both Bouvet and Peter 1 I.)."
                 ),
             })
         else:
             shared_note = (
-                "Select each entity BY NAME in HamAlert's own DXCC picker, not by "
-                "prefix -- some prefixes are shared across entities. Split into two "
+                "Select each entity in HamAlert's own DXCC picker by the name and "
+                "number shown here, not by prefix -- some prefixes are shared across "
+                "entities. Split into two "
                 "triggers because more than %d entities risks HamAlert's 10,000-"
                 "spots/day auto-disable ceiling (confirmed real, 2026-08-18). If a "
                 "bucket still gets auto-disabled, check its trigger status page on "
@@ -931,7 +1050,7 @@ def _build_needed_trigger_recipe(entity, band, mode):
     if not entity:
         return None
 
-    conditions = [{"label": "DXCC is", "value": entity}]
+    conditions = [{"label": "DXCC is", "value": _entity_label(entity)}]
     if band:
         conditions.append({"label": "Band is", "value": band})
     if mode:
@@ -943,7 +1062,8 @@ def _build_needed_trigger_recipe(entity, band, mode):
         "title": f"Needed: {' '.join(title_parts)}",
         "conditions": conditions,
         "note": (
-            "Select the entity BY NAME in HamAlert's own DXCC picker, not by prefix. "
+            "Select the entity in HamAlert's own DXCC picker by the name and number "
+            "shown here, not by prefix. "
             "Volume expected to be very low."
         ),
     }
@@ -1557,22 +1677,58 @@ def _needed_entity_kind_exists(entity_name):
     whole-entity target and one or more separate band/mode-slot targets at once
     (same reasoning already established for last-seen records, see the comment
     above that section)."""
+    number, _canonical = _resolve_entity(entity_name)
     target = _normalize_entity_name(entity_name)
     with _needed_lock:
         for w in _needed:
-            if _normalize_entity_name(w.get("entity")) == target and _needed_entry_kind(w) == "entity":
+            if _needed_entry_kind(w) != "entity":
+                continue
+            if number is not None and w.get("dxcc") == number:
+                return True
+            if _normalize_entity_name(w.get("entity")) == target:
                 return True
     return False
 
 
-def _entity_band_mode_matches(spot, entity_name, band_filter_set, mode_filter_set):
+def _needed_match_key(entity_name, dxcc=None):
+    """How a Needed entry is matched against spots (2026-11-15): by DXCC number when
+    the entry has one, else by normalized entity name as before."""
+    try:
+        number = int(dxcc) if dxcc not in (None, "") else None
+    except (TypeError, ValueError):
+        number = None
+    if number is not None:
+        return ("dxcc", number)
+    return ("name", _normalize_entity_name(entity_name))
+
+
+def _entity_band_mode_matches(spot, key, band_filter_set, mode_filter_set):
     """The real matching predicate, extracted 2026-09-06 from _find_last_spot_for_entity
     so the Category Activity Feed (which needs to find EVERY matching spot, not just
     the single best one) can reuse the identical, already-fixed logic rather than a
     second copy that could quietly drift out of sync with a future fix. See
     _find_last_spot_for_entity's own docstring for the real 2026-09-05 multi-value
-    band/mode bug this matching logic already fixed once."""
-    if _normalize_entity_name(spot.get("entity")) != entity_name:
+    band/mode bug this matching logic already fixed once.
+
+    2026-11-15: the second argument is now a match key from _needed_match_key() --
+    ("dxcc", number) for an entry with a DXCC number, ("name", normalized name)
+    otherwise. Number matching compares the spot's own "dxcc" field, so spelling no
+    longer matters; a spot without a usable number falls back to comparing its name
+    with that number's HamAlert name."""
+    kind, value = key
+    if kind == "dxcc":
+        try:
+            spot_number = int(spot.get("dxcc"))
+        except (TypeError, ValueError):
+            spot_number = None
+        if spot_number is not None:
+            if spot_number != value:
+                return False
+        else:
+            row = _entity_by_number.get(value)
+            if not row or _normalize_entity_name(spot.get("entity")) != _normalize_entity_name(row["name"]):
+                return False
+    elif _normalize_entity_name(spot.get("entity")) != value:
         return False
     if band_filter_set and (spot.get("band") or "").strip().lower() not in band_filter_set:
         return False
@@ -1604,7 +1760,7 @@ def _spot_info_from_entry(entry, spot):
     }
 
 
-def _find_last_spot_for_entity(entity_name, recent_spots, band=None, mode=None):
+def _find_last_spot_for_entity(entity_name, recent_spots, band=None, mode=None, dxcc=None):
     """Same shape/purpose as _find_last_spot_for_callsign, but matches by entity name
     instead of callsign -- the right join key for Needed (any band/mode) and Wanted
     (a specific band/mode) since neither is tied to one advance-known callsign.
@@ -1626,9 +1782,11 @@ def _find_last_spot_for_entity(entity_name, recent_spots, band=None, mode=None):
     Sierra Leone's) behave identically to before, since a one-item set is
     equivalent to the old exact-match check. This matching logic now lives in
     _entity_band_mode_matches() (2026-09-06), reused by the Category Activity
-    Feed endpoint so that fix can't be silently duplicated out of sync."""
-    target = _normalize_entity_name(entity_name)
-    if not target:
+    Feed endpoint so that fix can't be silently duplicated out of sync.
+
+    dxcc (2026-11-15): the entry's DXCC number, if it has one -- see _needed_match_key()."""
+    target = _needed_match_key(entity_name, dxcc)
+    if not target[1]:
         return None
     band_filter = (band or "").strip().lower() or None
     mode_filter = (mode or "").strip().lower() or None
@@ -1867,7 +2025,7 @@ def _build_dxmon_needed():
     result = []
     for n in needed_list:
         key = "needed:" + n["id"]
-        last_spot = _find_last_spot_for_entity(n["entity"], recent_spots, n.get("band"), n.get("mode"))
+        last_spot = _find_last_spot_for_entity(n["entity"], recent_spots, n.get("band"), n.get("mode"), n.get("dxcc"))
         if last_spot:
             _record_last_seen(key, last_spot)
 
@@ -1886,7 +2044,7 @@ def _build_dxmon_needed():
         # callsign-level key -- _record_spot_history's own dedup (checks the
         # whole list, not just the front) keeps this idempotent across repeated
         # ~60s polls of the same already-known spots.
-        target = _normalize_entity_name(n["entity"])
+        target = _needed_match_key(n["entity"], n.get("dxcc"))
         band_filter = (n.get("band") or "").strip().lower() or None
         mode_filter = (n.get("mode") or "").strip().lower() or None
         band_set = {b.strip() for b in band_filter.split(",") if b.strip()} if band_filter else None
@@ -2078,7 +2236,7 @@ def api_dxmon_activity_needed():
 
     filters = []
     for n in needed_list:
-        target = _normalize_entity_name(n["entity"])
+        target = _needed_match_key(n["entity"], n.get("dxcc"))
         band_filter = (n.get("band") or "").strip().lower() or None
         mode_filter = (n.get("mode") or "").strip().lower() or None
         band_set = {b.strip() for b in band_filter.split(",") if b.strip()} if band_filter else None
@@ -2376,7 +2534,7 @@ def page_needed():
     # than in the template, since Jinja has no built-in date arithmetic. Web-only,
     # not part of the entry shape returned by /api/dxmon/needed.
     entries = [dict(w, days_old=_needed_days_old(w)) for w in entries]
-    return render_template("needed.html", entries=entries)
+    return render_template("needed.html", entries=entries, hamalert_entities=_hamalert_entities)
 
 
 @app.route("/needed/add", methods=["POST"])
@@ -2419,7 +2577,8 @@ def page_needed_edit_form(needed_id):
     entries.sort(key=lambda w: w.get("pin_order", 0) if w.get("pinned") else 0)
     entries.sort(key=lambda w: not w.get("pinned"))
     entries = [dict(w, days_old=_needed_days_old(w)) for w in entries]
-    return render_template("needed.html", entries=entries, edit_entry=edit_entry)
+    return render_template("needed.html", entries=entries, edit_entry=edit_entry,
+                           hamalert_entities=_hamalert_entities)
 
 
 @app.route("/needed/edit/<needed_id>", methods=["POST"])
@@ -2465,6 +2624,9 @@ def api_needed_list():
     # to tag its Suggestions "already in DX Monitor" -- see DXMon's own Joplin note.
     # Additive changes only: keep the path, the top-level "entries" array and those
     # three fields' meaning. The analyzer never calls POST/DELETE.
+    # 2026-11-15 (additive): entries now also carry "dxcc", the ARRL DXCC number,
+    # when the entity name is known; absent otherwise. "entity" is now stored in
+    # HamAlert's exact spelling whenever it resolves.
     with _needed_lock:
         return jsonify({"entries": list(_needed), "count": len(_needed)})
 
@@ -2504,7 +2666,7 @@ def page_triggers_for_needed(needed_id):
     recipes = [recipe] if recipe else []
     return render_template(
         "triggers.html",
-        entities=_no_confirms_entities,
+        entities=_trigger_picker_entities(),
         prefill_callsign="",
         recipes=recipes,
     )
@@ -2571,12 +2733,24 @@ def page_live():
     return render_template("live.html")
 
 
+def _trigger_picker_entities():
+    """no_confirms.csv rows for the Trigger Builder's picker, shown in HamAlert's
+    spelling with the DXCC number (2026-11-15). The checkbox value is the HamAlert
+    name, so recipes and "also add to Needed" both use the name HamAlert expects.
+    A LoTW name with no match is shown as-is."""
+    out = []
+    for e in _no_confirms_entities:
+        number, canonical = _resolve_entity(e["entity"])
+        out.append({"entity": canonical or e["entity"], "prefix": e["prefix"], "dxcc": number})
+    return out
+
+
 @app.route("/triggers")
 def page_triggers():
     prefill_callsign = request.args.get("callsign", "")
     return render_template(
         "triggers.html",
-        entities=_no_confirms_entities,
+        entities=_trigger_picker_entities(),
         prefill_callsign=prefill_callsign,
         recipes=None,
         added_to_needed=None,
@@ -2611,17 +2785,18 @@ def page_triggers_generate():
             entity = (entity or "").strip()
             if not entity:
                 continue
-            key = _normalize_entity_name(entity)
+            number, canonical = _resolve_entity(entity)
+            key = number if number is not None else _normalize_entity_name(entity)
             if key in seen or _needed_entity_kind_exists(entity):
                 continue
             seen.add(key)
             entry, error = _add_needed(entity, "", "")
             if entry:
-                added_to_needed.append(entity)
+                added_to_needed.append(entry["entity"])
 
     return render_template(
         "triggers.html",
-        entities=_no_confirms_entities,
+        entities=_trigger_picker_entities(),
         prefill_callsign="",
         recipes=recipes,
         added_to_needed=added_to_needed,
@@ -2645,6 +2820,7 @@ def _spot_recorder_loop():
 if __name__ == "__main__":
     _load_watched()
     _load_no_confirms()
+    _load_hamalert_entities()  # before _load_needed(): its DXCC backfill needs the table
     _load_needed()
     _load_last_seen()
     _load_spot_history()

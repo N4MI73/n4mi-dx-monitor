@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY adxo_service.py .
 COPY no_confirms.csv .
+COPY hamalert_entities.csv .
 COPY templates/ templates/
 
 EXPOSE 8083

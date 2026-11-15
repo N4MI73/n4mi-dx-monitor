@@ -12,6 +12,53 @@
        style="color: var(--accent-active); white-space: nowrap;">HamAlert conditions reference &rarr;</a>
   </p>
 
+  <details class="card trigger-help" style="margin-top: 1rem;">
+    <summary class="dxcc">? Best practices for Watched and Needed triggers</summary>
+    <p class="meta" style="margin-top: 0.6rem;">
+      A short checklist. The full version, with screenshots of real triggers, is in the
+      <a href="https://github.com/N4MI73/n4mi-dx-monitor/blob/main/User_Guide.md#best-practices"
+         target="_blank" rel="noopener" style="color: var(--accent-active);">User Guide's Best Practices</a>.
+    </p>
+
+    <h3>Every trigger</h3>
+    <ul>
+      <li><strong>Two things must exist:</strong> a HamAlert trigger with the <strong>Telnet</strong> action,
+        and a matching entry on DXMon's Watched or Needed page. Creating one doesn't create the other.
+        An entry with no trigger never shows a hit; a trigger with no entry only adds spot traffic.</li>
+      <li><strong>Review the recipe in HamAlert before saving it.</strong> Check the callsign or entity,
+        bands, modes, spot sources and Telnet action.</li>
+      <li><strong>Consider a Spotter continent condition</strong> for your own continent. It cuts duplicate
+        and distant spots and keeps busy triggers under HamAlert's daily limit, at the cost of some early
+        reports from elsewhere.</li>
+      <li><strong>Add a comment</strong> so HamAlert's trigger list lines up with DXMon's lists, e.g.
+        <code>WATCHED: Nepal (ends 2026-09-19)</code>, <code>NEEDED: Glorioso Is.</code>,
+        <code>BAND: Singapore 17m, 15m FT8</code>. DXMon doesn't read comments; they're for you.</li>
+    </ul>
+
+    <h3>Watched (a DXpedition callsign)</h3>
+    <ul>
+      <li><strong>Callsign is</strong> the on-air callsign, plus the bands and modes you can work.</li>
+      <li><strong>Compound callsigns</strong> (ADXO says "9N", the operation signs "9N/OM0GA"): use HamAlert's
+        <strong>Full Callsign</strong> condition, and edit the Watched entry to the same full form.</li>
+      <li><strong>When it ends</strong> (the Ended flag on the Watched page): remove or pause the trigger
+        and remove the Watched entry.</li>
+    </ul>
+
+    <h3>Needed (a whole entity, or a band/mode slot)</h3>
+    <ul>
+      <li><strong>DXCC is</strong> the entity, picked in HamAlert by the name and number this page shows.
+        The Create HamAlert trigger link on each Needed entry gives the exact recipe.</li>
+      <li><strong>Whole entity:</strong> DXCC only. <strong>Slot:</strong> add Band is and Mode is with exactly
+        the bands and modes checked on the Needed entry (CW, SSB, FT4, FT8).</li>
+      <li><strong>Spelling no longer has to match.</strong> DXMon matches Needed entries by DXCC number. Pick the
+        name from the list on the Needed page; an entry flagged "Name not recognised" still matches by name
+        only and needs fixing.</li>
+      <li><strong>Many entities at once:</strong> above 5, this builder splits the recipe into Digital and
+        Voice/CW triggers, because HamAlert switches off a trigger that passes its daily spot limit.</li>
+      <li><strong>Once confirmed,</strong> remove both the trigger and the Needed entry.</li>
+    </ul>
+  </details>
+
   {% if recipes %}
     <p class="meta" style="margin-top: 1rem;"><a href="{{ url_for('page_triggers') }}">&larr; Back to builder</a></p>
     {% if added_to_needed %}
@@ -55,7 +102,7 @@
           {% for e in entities %}
             <label style="display: block; padding: 0.15rem 0; font-size: 0.85rem;">
               <input type="checkbox" name="entity" value="{{ e.entity }}">
-              {{ e.entity }}{% if e.prefix %} <span class="meta" style="display:inline;">({{ e.prefix }})</span>{% endif %}
+              {{ e.entity }}{% if e.dxcc %} <span class="meta" style="display:inline;">DXCC {{ e.dxcc }}</span>{% endif %}{% if e.prefix %} <span class="meta" style="display:inline;">({{ e.prefix }})</span>{% endif %}
             </label>
           {% endfor %}
         </div>
@@ -76,4 +123,12 @@
       </div>
     </form>
   </div>
+
+  <style>
+    .trigger-help summary { cursor: pointer; }
+    .trigger-help h3 { font-size: 0.95rem; margin: 1rem 0 0.3rem; }
+    .trigger-help ul { margin: 0; padding-left: 1.2rem; font-size: 0.85rem; line-height: 1.45; }
+    .trigger-help li { margin: 0.25rem 0; }
+    .trigger-help code { font-size: 0.8rem; }
+  </style>
 {% endblock %}

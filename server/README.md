@@ -40,6 +40,7 @@ container restarts and redeploys:
 | `last_seen.json` | `dxmon-adxo` | Persisted last-hit record per Watched/Needed entry, surviving HamAlert's own rolling spot buffer aging a hit out |
 | `spot_history.json` | `dxmon-adxo` | Persisted last-10-spots history per callsign/entity, feeding the drill-down screens |
 | `no_confirms.csv` | You, manually | Your own never-confirmed-entity list (e.g. exported from LoTW), seeding the Trigger Builder's entity picker. `dxmon-adxo` only ever reads this -- it's never written by the app, so your own periodic re-export is never at risk of being overwritten |
+| `hamalert_entities.csv` | You, manually (from N4MI DXCC Analyzer) | Every current DXCC entity with its number, HamAlert's exact name and LoTW's spelling. Gives Needed entries their DXCC numbers so spots match by number, and converts LoTW spellings. Read-only; replace only when an entity is added or renamed. If missing, Needed entries match by name only |
 | `state.json` | `dxmon-hamalert` | Whether the HamAlert listener is currently enabled or disabled -- see "Pausing HamAlert" below. Persisted specifically so a deliberate pause survives a container/NAS restart |
 
 **Confirmed from the real `docker-compose.yml`:** `dxmon-adxo` mounts a
@@ -72,6 +73,7 @@ which service, and real defaults.
 | `WATCHED_FILE` | `/app/data/watched.json` | No | Override only if you're customizing the data volume layout |
 | `NEEDED_FILE` | `/app/data/needed.json` | No | Same |
 | `NO_CONFIRMS_FILE` | `no_confirms.csv` | No | Same -- note this one is relative, not under `/app/data/` by default |
+| `HAMALERT_ENTITIES_FILE` | `hamalert_entities.csv` | No | Same -- relative, built into the image |
 | `LAST_SEEN_FILE` | `/app/data/last_seen.json` | No | Same |
 | `SPOT_HISTORY_FILE` | `/app/data/spot_history.json` | No | Same |
 | `SPOT_RECORDER_INTERVAL_SECONDS` | `60` | No | How often the server records new HamAlert spots into `last_seen.json` and `spot_history.json` in the background, so history builds up even with no device or DXMon Live page open. `0` turns it off (history is then recorded only when the device or DXMon Live polls) |
