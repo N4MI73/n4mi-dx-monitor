@@ -38,6 +38,12 @@ glance:
 - **DXMon Live**, a full-size web view for a desktop or tablet, shows every
   Watched and Needed entry at once with its last 24 hours of spots -- with
   or without the physical device.
+- Optional **Shack controls** in DXMon Live (off by default, per browser):
+  a **Tune** link for live CW/SSB spots and a **Rotate** link toward the
+  station, handed to your own `n4mi-shack:` handler on the station computer.
+  DXMon itself never talks to a radio or rotator. See the User Guide.
+- Lets you add a DXpedition to Watched by hand when it isn't on ADXO, with
+  an end date that raises an **Ended** reminder once it passes.
 - Includes on-device Wi-Fi setup (a real captive portal) -- no need to
   hardcode credentials or reflash firmware just to change networks.
 - All curation (deciding what to track, building HamAlert triggers) happens

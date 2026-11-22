@@ -323,7 +323,7 @@ alongside the device, see the blog post
   (Needed), your note, and the last 10 spots in UTC with spotter, continent
   and comment. Close it with **Close**, **Esc**, or by clicking outside it.
 
-  ![A DXMon Live popup: beam heading, ADXO dates and QSL info, the 24-hour strip, and the last 10 spots.](images/dxmon_live_popup.png)
+  ![A DXMon Live popup: beam heading, ADXO dates and QSL info, the Tune and Rotate buttons (Shack controls on), the 24-hour strip, and the last 10 spots.](images/dxmon_live_popup.png)
 
 - **View only.** To change anything, use the **Edit Watched** / **Edit
   Needed** links or the popup's editor link.
