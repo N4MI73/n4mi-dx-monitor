@@ -282,6 +282,12 @@ function adxoText(a) {
   return "ended " + shortDate(a.end);
 }
 
+// v1.3: stored end date for entries with no live ADXO link (manual entries, or
+// ADXO entries that have aged off the feed).
+function endText(ymd) {
+  return (ymd < new Date().toISOString().slice(0, 10) ? "ended " : "ends ") + shortDate(ymd);
+}
+
 function adxoState(a) {
   if (a.active) return "on air";
   return a.begin > new Date().toISOString().slice(0, 10) ? "upcoming" : "ended";
@@ -339,6 +345,7 @@ function renderWatched() {
     const spot = latestSpot(w);
     let quiet = "No spots in the last 24 h";
     if (w.adxo) quiet += " · ADXO: " + adxoText(w.adxo);
+    else if (w.end_date) quiet += " · " + endText(w.end_date);
     return '<tr data-key="w:' + esc(w.callsign) + '">' +
       rowCells(st, '<span class="mono">' + esc(w.callsign) + "</span>", esc(w.dxcc), spot, beamDeg(w.beam), w.history, quiet) + "</tr>";
   }).join("");
@@ -409,7 +416,8 @@ function renderModal() {
   let facts = [];
   if (isW) {
     facts.push(["Beam from " + data.station_grid, beamLong(it.beam)]);
-    facts.push(["ADXO", it.adxo ? shortDate(it.adxo.begin) + " – " + shortDate(it.adxo.end) + " · " + adxoState(it.adxo) : "not linked to an ADXO entry"]);
+    if (it.adxo) facts.push(["ADXO", shortDate(it.adxo.begin) + " – " + shortDate(it.adxo.end) + " · " + adxoState(it.adxo)]);
+    else facts.push(["ADXO", "not linked to an ADXO entry" + (it.end_date ? " · " + endText(it.end_date) : "")]);
     if (it.qsl) facts.push(["QSL", it.qsl]);
   } else {
     const heard = latestSpot(it) || it.last_seen;

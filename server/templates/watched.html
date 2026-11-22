@@ -23,11 +23,79 @@
       align-self: center;
       text-decoration: underline;
     }
+    /* v1.3 (2026-11-22): the add/edit card sits at the top of the page (the
+       edit form used to render below the whole list, easy to miss). The date
+       picker matches base.html's text inputs. */
+    input[type=date] {
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.3rem 0.6rem;
+      border-radius: 5px;
+      font-size: 0.85rem;
+      color-scheme: dark;
+    }
+    .form-error { color: var(--danger); font-size: 0.85rem; }
   </style>
   <p class="meta">{{ entries|length }} watched callsign(s).</p>
 
+  {% if edit_entry %}
+    <div class="card" id="watched-form">
+      <div class="dxcc">Edit watched entry</div>
+      <form class="watch-form" method="post"
+            action="{{ url_for('page_watched_edit_save', watched_id=edit_entry.id) }}"
+            style="margin-top: 0.7rem; flex-direction: column; align-items: stretch; gap: 0.9rem;">
+        <div>
+          <input type="text" name="callsign" value="{{ edit_entry.callsign }}" required
+                 title="The real on-air callsign -- can be a compound callsign, e.g. 9N/OM0GA">
+          <div class="meta" style="margin-top: 0.25rem;">
+            ADXO often only gives a DXpedition's base prefix (e.g. "9N" for Nepal).
+            If the real on-air callsign is a compound form (e.g. "9N/OM0GA," visible in
+            ADXO's own "By X as Y" text), enter it here -- it'll match HamAlert's own
+            "Full Callsign" condition correctly.
+          </div>
+        </div>
+        <input type="text" name="dxcc" value="{{ edit_entry.dxcc }}" required placeholder="DXCC entity">
+        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+          <label class="meta" for="edit-end">End date</label>
+          <input type="date" id="edit-end" name="end" value="{{ edit_entry.adxo_end or '' }}"
+                 title="Shows the Ended reminder after this date. Leave blank if unknown.">
+        </div>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <input type="text" name="note" placeholder="note (optional)" value="{{ edit_entry.note or '' }}">
+          <button type="submit">Save</button>
+          <a href="{{ url_for('page_watched') }}" style="color: var(--muted); font-size: 0.85rem;">Cancel</a>
+        </div>
+      </form>
+    </div>
+  {% else %}
+    <div class="card" id="watched-form">
+      <div class="dxcc">Add manually</div>
+      <div class="meta" style="margin-top: 0.25rem;">
+        For an operation that isn't on ADXO (for example one listed in The Weekly DX).
+        Matches spots by callsign, like every Watched entry -- add one entry per callsign,
+        and create its HamAlert trigger as usual.
+      </div>
+      {% if add_error %}<div class="form-error" style="margin-top: 0.4rem;">{{ add_error }}</div>{% endif %}
+      <form class="watch-form" method="post" action="{{ url_for('page_watched_add_manual') }}">
+        <input type="text" name="callsign" required placeholder="callsign"
+               value="{{ form.callsign if form else '' }}"
+               title="The on-air callsign, in the same form as your HamAlert trigger (e.g. 9N/OM0GA)">
+        <input type="text" name="dxcc" required placeholder="DXCC entity"
+               value="{{ form.dxcc if form else '' }}">
+        <label class="meta" for="add-end">Ends</label>
+        <input type="date" id="add-end" name="end" value="{{ form.end if form else '' }}"
+               title="Shows the Ended reminder after this date. Leave blank if unknown.">
+        <input type="text" name="note" placeholder="note (optional)"
+               value="{{ form.note if form else '' }}">
+        <button type="submit">Add</button>
+      </form>
+    </div>
+  {% endif %}
+
+
   {% if not entries %}
-    <div class="empty">Nothing watched yet -- add some from the Browse ADXO page.</div>
+    <div class="empty">Nothing watched yet -- add some from the Browse ADXO page, or add one manually above.</div>
   {% endif %}
 
   {% for w in entries %}
@@ -53,8 +121,9 @@
       {% if w.note %}<div class="info">{{ w.note }}</div>{% endif %}
       <div class="meta">
         Added {{ w.added }}
-        {% if w.source_adxo_id %} &middot; linked to ADXO entry {{ w.source_adxo_id }}{% endif %}
-        {% if w.adxo and w.adxo.end %} &middot; ends {{ w.adxo.end }}{% endif %}
+        {% if w.source_adxo_id %} &middot; linked to ADXO entry {{ w.source_adxo_id }}{% else %} &middot; added manually{% endif %}
+        {% set end_date = w.adxo_end or (w.adxo.end if w.adxo else '') %}
+        {% if end_date %} &middot; ends {{ end_date }}{% endif %}
       </div>
       {% if w.beam %}
         <div class="dates">Beam: {{ w.beam.heading_deg }}&deg; &middot; {{ w.beam.distance_mi }} mi</div>
@@ -67,29 +136,4 @@
     </div>
   {% endfor %}
 
-  {% if edit_entry %}
-    <div class="card" style="margin-top: 1.5rem;">
-      <div class="dxcc">Edit watched entry</div>
-      <form class="watch-form" method="post"
-            action="{{ url_for('page_watched_edit_save', watched_id=edit_entry.id) }}"
-            style="margin-top: 0.7rem; flex-direction: column; align-items: stretch; gap: 0.9rem;">
-        <div>
-          <input type="text" name="callsign" value="{{ edit_entry.callsign }}" required
-                 title="The real on-air callsign -- can be a compound callsign, e.g. 9N/OM0GA">
-          <div class="meta" style="margin-top: 0.25rem;">
-            ADXO often only gives a DXpedition's base prefix (e.g. "9N" for Nepal).
-            If the real on-air callsign is a compound form (e.g. "9N/OM0GA," visible in
-            ADXO's own "By X as Y" text), enter it here -- it'll match HamAlert's own
-            "Full Callsign" condition correctly.
-          </div>
-        </div>
-        <input type="text" name="dxcc" value="{{ edit_entry.dxcc }}" required placeholder="DXCC entity">
-        <div style="display: flex; gap: 0.5rem; align-items: center;">
-          <input type="text" name="note" placeholder="note (optional)" value="{{ edit_entry.note or '' }}">
-          <button type="submit">Save</button>
-          <a href="{{ url_for('page_watched') }}" style="color: var(--muted); font-size: 0.85rem;">Cancel</a>
-        </div>
-      </form>
-    </div>
-  {% endif %}
 {% endblock %}

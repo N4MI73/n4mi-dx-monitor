@@ -63,7 +63,7 @@ REQUEST_TIMEOUT_SECONDS = 20
 # strings in main.cpp when the firmware changes too. A server-only release (like
 # v1.2, 2026-11-15) bumps only this; the device's Config screen keeps showing the
 # firmware's own version.
-DXMON_VERSION = "1.2"
+DXMON_VERSION = "1.3"
 
 USER_AGENT = "N4MI-DXMon/1.0 (+https://github.com/N4MI73/n4mi-dx-monitor; contact via n4mi73@gmail.com)"
 
@@ -491,7 +491,7 @@ def _add_watched(callsign, dxcc, source_adxo_id=None, note="", adxo_end=None):
     return entry, None
 
 
-def _update_watched(watched_id, callsign, dxcc, note=""):
+def _update_watched(watched_id, callsign, dxcc, note="", end=None):
     """In-place edit (2026-09-15) -- id, source_adxo_id, adxo_end, and added
     are all preserved unchanged; only callsign/dxcc/note are replaced.
 
@@ -502,11 +502,19 @@ def _update_watched(watched_id, callsign, dxcc, note=""):
     form. Confirmed via direct code read before building this:
     _find_last_spot_for_callsign() already checks a spot's `fullCallsign`
     field, not just `callsign` -- so correcting the stored value here is the
-    entire fix. No matching-logic change was needed anywhere else."""
+    entire fix. No matching-logic change was needed anywhere else.
+
+    v1.3 (2026-11-22): `end` (YYYY-MM-DD or blank) replaces the stored
+    adxo_end when given, so the Ended date can be set or corrected for any
+    entry, manual or ADXO-sourced. None leaves it unchanged (API callers)."""
     callsign = (callsign or "").strip()
     dxcc = (dxcc or "").strip()
     if not callsign or not dxcc:
         return None, "Callsign and DXCC entity are both required."
+    if end is not None:
+        end, err = _clean_end_date(end)
+        if err:
+            return None, err
 
     with _watched_lock:
         for w in _watched:
@@ -514,9 +522,25 @@ def _update_watched(watched_id, callsign, dxcc, note=""):
                 w["callsign"] = callsign
                 w["dxcc"] = dxcc
                 w["note"] = (note or "").strip()
+                if end is not None:
+                    w["adxo_end"] = end
                 _save_watched()
                 return w, None
     return None, "Not found."
+
+
+def _clean_end_date(value):
+    """v1.3 (2026-11-22): validate an end date typed on /watched (the form's
+    date picker sends YYYY-MM-DD). Blank is allowed (no end date known).
+    Returns (cleaned, error)."""
+    value = (value or "").strip()
+    if not value:
+        return "", None
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        return None, "End date must be YYYY-MM-DD."
+    return value, None
 
 
 def _remove_watched(watched_id):
@@ -2324,7 +2348,12 @@ def api_dxmon_live():
     # QSL info isn't in the device payload (the firmware never shows it); join it
     # here from the Watched entry's source ADXO record for the popup.
     qsl_by_call = {}
+    # v1.3 (2026-11-22): the stored end date (adxo_end -- captured from ADXO at
+    # watch-time, or typed for a manual entry) so the popup can show dates for
+    # entries with no live ADXO link. Additive field; the device feed is unchanged.
+    end_by_call = {}
     for w in watched_raw:
+        end_by_call[(w.get("callsign") or "").strip().upper()] = w.get("adxo_end", "") or ""
         sid = w.get("source_adxo_id")
         if sid and sid in adxo_by_id:
             qsl_by_call[(w.get("callsign") or "").strip().upper()] = adxo_by_id[sid].get("qsl", "")
@@ -2341,7 +2370,8 @@ def api_dxmon_live():
     for item in watched:
         call = (item["callsign"] or "").strip()
         history = _get_spot_history("callsign:" + call.lower())
-        watched_out.append(dict(item, qsl=qsl_by_call.get(call.upper(), ""), history=history))
+        watched_out.append(dict(item, qsl=qsl_by_call.get(call.upper(), ""),
+                                end_date=end_by_call.get(call.upper(), ""), history=history))
 
     needed_out = []
     for item in needed:
@@ -2496,7 +2526,31 @@ def page_watched_edit_save(watched_id):
         callsign=request.form.get("callsign"),
         dxcc=request.form.get("dxcc"),
         note=request.form.get("note"),
+        end=request.form.get("end", ""),
     )
+    return redirect(url_for("page_watched"))
+
+
+@app.route("/watched/add", methods=["POST"])
+def page_watched_add_manual():
+    """v1.3 (2026-11-22): add a Watched entry by hand, for an operation that
+    isn't on ADXO (for example one listed in The Weekly DX). Stored exactly like
+    an ADXO-sourced entry, just with no source_adxo_id; the typed end date goes
+    in adxo_end, so the existing Ended badge works unchanged (it stays until Dan
+    removes the entry -- the reminder to remove the HamAlert trigger too).
+    Matching stays by callsign, like every Watched entry."""
+    end, err = _clean_end_date(request.form.get("end"))
+    if not err:
+        _, err = _add_watched(
+            callsign=request.form.get("callsign"),
+            dxcc=request.form.get("dxcc"),
+            source_adxo_id=None,
+            note=request.form.get("note"),
+            adxo_end=end,
+        )
+    if err:
+        return render_template("watched.html", entries=_watched_enriched_entries(),
+                               add_error=err, form=request.form), 400
     return redirect(url_for("page_watched"))
 
 

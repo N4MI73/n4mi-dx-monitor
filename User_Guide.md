@@ -198,6 +198,18 @@ DXCC entity, or note -- useful when ADXO only gives a DXpedition's base
 prefix (e.g. "9N" for Nepal) but the real on-air callsign is a compound
 form (e.g. "9N/OM0GA"). Enter the full compound form here to match
 HamAlert's own "Full Callsign" condition -- see Best Practices below.
+
+**Add manually** (top of the page) adds an operation that isn't on ADXO --
+for example one you read about in a DX newsletter. Enter the callsign (in
+the same form as your HamAlert trigger), the DXCC entity, the end date if
+known, and an optional note. It works like any other Watched entry: it
+matches spots by callsign, so add one entry per callsign, and create its
+HamAlert trigger as usual. **Edit** opens in the same place at the top of
+the page and also lets you set or correct an entry's end date.
+
+The **Ended** badge appears once an entry's end date has passed, whether it
+came from ADXO or was typed in. It stays until you remove the entry
+yourself, as the reminder to remove the matching HamAlert trigger too.
 Remove an entry, or use the **Create HamAlert trigger** link next to it
 to get a ready-to-paste trigger recipe for that callsign. Any entry whose
 DXpedition end date has passed gets a small amber "Ended" flag, which
@@ -304,7 +316,8 @@ alongside the device, see the blog post
   spot's frequency, mode, band (with PropMon's band-condition dot), spotter,
   age and beam heading, and a **24-hour strip** with one dot per spot, so you
   can see at a glance whether a station keeps showing up. Quiet Watched
-  entries show their ADXO dates instead (for example "starts Oct 16").
+  entries show their ADXO dates instead (for example "starts Oct 16"), or
+  the end date you entered for a manual entry.
 - **Click or tap any row** for a popup with the full detail: beam heading
   and distance, ADXO dates and QSL info (Watched), the callsign last heard
   (Needed), your note, and the last 10 spots in UTC with spotter, continent
