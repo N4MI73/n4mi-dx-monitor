@@ -327,6 +327,16 @@ alongside the device, see the blog post
 
 - **View only.** To change anything, use the **Edit Watched** / **Edit
   Needed** links or the popup's editor link.
+- **Shack controls (optional, off by default).** If your station has a
+  handler for `n4mi-shack:` links (the author's comes from his Ham Shack
+  Automation scripts), turn **Shack controls** on in that browser, top right.
+  The popup then shows **Tune** (LIVE CW or SSB spots only; never FT8/FT4)
+  and **Rotate** (whenever a beam heading is known). They open
+  `n4mi-shack:tune?freq=<Hz>&mode=CW|SSB` and `n4mi-shack:rotate?az=<0-359>`;
+  DXMon itself never talks to a radio or rotator, and nothing comes back to
+  the page. The setting is remembered per browser, so leave it off on every
+  other device. Over plain HTTP, Chrome asks before every link unless the
+  `AutoLaunchProtocolsFromOrigins` policy allows DXMon's address.
 
 - **Theme:** Auto, Dark or Light, top right. Auto follows your computer's or
   tablet's own setting. Each browser remembers its own choice.

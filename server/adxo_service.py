@@ -63,7 +63,7 @@ REQUEST_TIMEOUT_SECONDS = 20
 # strings in main.cpp when the firmware changes too. A server-only release (like
 # v1.2, 2026-11-15) bumps only this; the device's Config screen keeps showing the
 # firmware's own version.
-DXMON_VERSION = "1.3"
+DXMON_VERSION = "1.4"
 
 USER_AGENT = "N4MI-DXMon/1.0 (+https://github.com/N4MI73/n4mi-dx-monitor; contact via n4mi73@gmail.com)"
 

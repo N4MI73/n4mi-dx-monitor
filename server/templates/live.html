@@ -65,6 +65,8 @@
     padding: 4px 14px; border-radius: 13px; cursor: pointer;
   }
   .theme button.on { background: var(--accent); color: #fff; font-weight: 600; }
+  /* v1.4 (2026-11-22): Shack controls switch, same look as the theme switch. */
+  .theme .lbl { color: var(--faint); font-size: 11px; padding: 4px 4px 4px 10px; align-self: center; }
 
   .statusbar {
     background: var(--panel2); border-bottom: 1px solid var(--line); color: var(--dim);
@@ -162,6 +164,14 @@
   .htable tbody tr:nth-child(odd) td { background: var(--panel2); }
   .mfoot { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-top: 16px; font-size: 11px; color: var(--faint); }
   .mfoot a { font-size: 12px; }
+  /* v1.4 (2026-11-22): Tune / Rotate links in the popup (Shack controls on only). */
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 0 0 16px; }
+  .actions a.shackbtn {
+    border: 1px solid var(--accent); color: var(--accent); border-radius: 6px;
+    padding: 6px 14px; font-size: 13px; font-weight: 600; text-decoration: none;
+  }
+  .actions a.shackbtn:hover { background: var(--accent); color: #fff; }
+  .actions .hint { color: var(--faint); font-size: 11px; }
 </style>
 </head>
 <body>
@@ -175,6 +185,10 @@
     <a href="{{ url_for('page_hamalert') }}">HamAlert</a>
     <a href="{{ url_for('page_preview') }}">Device preview</a>
   </nav>
+  <div class="theme shack" role="group" aria-label="Shack controls"
+       title="Tune and Rotate links in the popup, handled by the ham computer's n4mi-shack: scripts. Turn on only in the shack's browser.">
+    <span class="lbl">Shack controls</span><button data-s="off">Off</button><button data-s="on">On</button>
+  </div>
   <div class="theme" role="group" aria-label="Theme">
     <button data-t="auto">Auto</button><button data-t="dark">Dark</button><button data-t="light">Light</button>
   </div>
@@ -232,6 +246,63 @@ document.querySelectorAll(".theme button").forEach(b => b.addEventListener("clic
   try { localStorage.setItem("dxmonLiveTheme", b.dataset.t); } catch (e) {}
   applyTheme(b.dataset.t);
 }));
+
+// ---------- shack controls (v1.4, 2026-11-22) ----------
+// Tune / Rotate links for Ham Shack Automation's n4mi-shack: handler on the ham
+// computer (contract agreed 2026-11-02, final 2026-11-22; additive changes only):
+//   n4mi-shack:tune?freq=<whole Hz>&mode=CW|SSB    n4mi-shack:rotate?az=<0-359>
+// DXMon never talks to the radio or rotator itself. Off by default, stored per
+// browser like the theme, so other devices never show the links.
+let shackOn = false;
+try { shackOn = localStorage.getItem("dxmonLiveShack") === "on"; } catch (e) {}
+function applyShack() {
+  document.querySelectorAll(".shack button").forEach(b => b.classList.toggle("on", (b.dataset.s === "on") === shackOn));
+}
+applyShack();
+document.querySelectorAll(".shack button").forEach(b => b.addEventListener("click", () => {
+  shackOn = b.dataset.s === "on";
+  try { localStorage.setItem("dxmonLiveShack", shackOn ? "on" : "off"); } catch (e) {}
+  applyShack();
+  if (openKey) renderModal();
+}));
+// Tune only for CW and SSB. FT8/FT4 (WSJT-X sets frequency for those) and every
+// other mode get no link.
+function shackMode(m) {
+  m = (m || "").trim().toLowerCase();
+  if (m === "cw") return "CW";
+  if (m === "ssb" || m === "usb" || m === "lsb") return "SSB";
+  return null;
+}
+// HamAlert sends MHz ("14.0255"); a value of 1000 or more is treated as kHz, so
+// either form gives whole Hz. Returns null if it isn't a usable number.
+function shackHz(f) {
+  const n = parseFloat(f);
+  if (!isFinite(n) || n <= 0) return null;
+  return Math.round(n < 1000 ? n * 1e6 : n * 1e3);
+}
+function tuneLink(spot) {
+  if (!spot) return null;
+  const mode = shackMode(spot.mode), hz = shackHz(spot.frequency);
+  if (!mode || !hz) return null;
+  return {href: "n4mi-shack:tune?freq=" + hz + "&mode=" + mode,
+          label: "Tune " + (hz / 1e6).toFixed(3) + " " + mode};
+}
+function rotateLink(beam) {
+  if (!beam || beam.heading_deg == null || !isFinite(beam.heading_deg)) return null;
+  const az = ((Math.round(beam.heading_deg) % 360) + 360) % 360;   // 360 -> 0
+  return {href: "n4mi-shack:rotate?az=" + az, label: "Rotate " + az + "°"};
+}
+function shackActions(it, isW, st) {
+  if (!shackOn) return "";
+  const tune = st === "live" ? tuneLink(it.last_spot) : null;
+  const heard = isW ? null : (latestSpot(it) || it.last_seen);
+  const rot = rotateLink(isW ? it.beam : (heard && heard.beam));
+  if (!tune && !rot) return "";
+  return '<div class="actions">' +
+    (tune ? '<a class="shackbtn" href="' + esc(tune.href) + '">' + esc(tune.label) + "</a>" : "") +
+    (rot ? '<a class="shackbtn" href="' + esc(rot.href) + '">' + esc(rot.label) + "</a>" : "") +
+    '<span class="hint">Handled by the ham computer; nothing comes back to this page.</span></div>';
+}
 
 // ---------- helpers ----------
 function esc(s) {
@@ -449,6 +520,7 @@ function renderModal() {
     '<div class="mhead"><span class="title">' + title + '</span><span class="what">' + what + '</span>' +
     '<span class="st ' + st + '">' + st.toUpperCase() + '</span><button class="close" id="closebtn">✕&nbsp; Close</button></div>' +
     '<div class="facts">' + facts.map(f => '<div><div class="k">' + esc(f[0]) + '</div><div class="v">' + esc(f[1]) + "</div></div>").join("") + "</div>" +
+    shackActions(it, isW, st) +
     '<div class="mlabel">LAST ' + (data.history_hours || 24) + " HOURS</div>" + strip(history, true) +
     '<div class="striplabels"><span>-24h</span><span>-18h</span><span>-12h</span><span>-6h</span><span>now</span></div>' +
     '<table class="htable"><thead><tr>' + cols.map(c => "<th>" + c + "</th>").join("") + "</tr></thead><tbody>" + rows + "</tbody></table>" +
